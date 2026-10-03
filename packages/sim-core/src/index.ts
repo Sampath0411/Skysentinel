@@ -13,3 +13,6 @@ export * from "./swarm.js";
 export * from "./impact.js";
 export * from "./response.js";
 export * from "./world.js";
+export * from "./sensors/index.js";
+export * from "./fusion.js";
+export * from "./knowability.js";

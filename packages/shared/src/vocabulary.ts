@@ -44,7 +44,7 @@ export const AffiliationSchema = z.enum(AFFILIATIONS);
 export type Affiliation = z.infer<typeof AffiliationSchema>;
 
 /** Sensor identifier (FR-SEN-1…5). */
-export const SENSOR_IDS = ["visual", "ir", "radar", "rf"] as const;
+export const SENSOR_IDS = ["visual", "ir", "radar", "rf", "flight_plan"] as const;
 export const SensorIdSchema = z.enum(SENSOR_IDS);
 export type SensorId = z.infer<typeof SensorIdSchema>;
 

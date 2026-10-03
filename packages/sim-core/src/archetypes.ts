@@ -19,6 +19,11 @@ export interface ArchetypeSpec {
   readonly size_m: number;
   /** Relative radar cross-section. Unitless by design — it is a relative term. */
   readonly rcs_rel: number;
+  /**
+   * Relative infrared signature. Fictional: how much an airframe shows up against
+   * a cold background. A combustion engine is hot, a glider is nearly invisible.
+   */
+  readonly thermal_rel: number;
   /** Cruise speed range, m/s. */
   readonly speed_mps: [number, number];
   /** Typical behaviour states, for the generator and validator. */
@@ -38,6 +43,7 @@ export const ARCHETYPE_SPECS: Record<Archetype, ArchetypeSpec> = {
     id: "recon_multirotor",
     size_m: 0.4,
     rcs_rel: 1.0,
+    thermal_rel: 0.9,
     speed_mps: [6, 12],
     typical_behaviours: ["transit", "orbit_loiter", "retreat"],
     rf_typical: true,
@@ -50,6 +56,7 @@ export const ARCHETYPE_SPECS: Record<Archetype, ArchetypeSpec> = {
     id: "fpv_attack",
     size_m: 0.3,
     rcs_rel: 0.7,
+    thermal_rel: 0.6,
     speed_mps: [25, 40],
     typical_behaviours: ["terrain_masked_approach", "approach_direct"],
     rf_typical: true,
@@ -63,6 +70,7 @@ export const ARCHETYPE_SPECS: Record<Archetype, ArchetypeSpec> = {
     id: "fixed_wing_recon",
     size_m: 1.5,
     rcs_rel: 1.6,
+    thermal_rel: 1.3,
     speed_mps: [18, 30],
     typical_behaviours: ["transit", "orbit_loiter"],
     rf_typical: true,
@@ -75,6 +83,7 @@ export const ARCHETYPE_SPECS: Record<Archetype, ArchetypeSpec> = {
     id: "decoy_drone",
     size_m: 0.5,
     rcs_rel: 1.0,
+    thermal_rel: 0.25,
     speed_mps: [5, 10],
     typical_behaviours: ["decoy_hover", "transit"],
     rf_typical: true,
@@ -87,6 +96,7 @@ export const ARCHETYPE_SPECS: Record<Archetype, ArchetypeSpec> = {
     id: "friendly_logistics",
     size_m: 0.8,
     rcs_rel: 1.3,
+    thermal_rel: 1.2,
     speed_mps: [8, 12],
     typical_behaviours: ["transit"],
     rf_typical: true,
@@ -99,6 +109,7 @@ export const ARCHETYPE_SPECS: Record<Archetype, ArchetypeSpec> = {
     id: "neutral_civil",
     size_m: 0.4,
     rcs_rel: 1.0,
+    thermal_rel: 0.8,
     speed_mps: [5, 12],
     typical_behaviours: ["transit", "orbit_loiter"],
     rf_typical: true,
@@ -111,6 +122,7 @@ export const ARCHETYPE_SPECS: Record<Archetype, ArchetypeSpec> = {
     id: "bird_flock",
     size_m: 0.3,
     rcs_rel: 0.3,
+    thermal_rel: 0.05,
     speed_mps: [8, 15],
     typical_behaviours: ["transit", "orbit_loiter"],
     rf_typical: false,

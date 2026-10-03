@@ -66,3 +66,66 @@ pretending dependencies are installed.
 
 **Why.** Sim time is integer ms so event logs compare byte for byte and the DB columns are exact.
 Float seconds accumulate representation error, which breaks replay equality over long sessions.
+---
+
+## D6 — Sensor platforms are placed relative to terrain, not at a fixed altitude (M2)
+
+**Decision.** `observerAt(terrain)` returns the mast position as `terrain.obstructionAt(x, y) + MAST_HEIGHT_M`
+rather than a constant z. There is no `DEFAULT_OBSERVER_POS` constant.
+
+**Why.** A fixed z is not merely inaccurate, it is silently fatal. The first M2 sensor tests returned a
+zero detection rate for every sensor and every range. At z=0 the observer sits inside the ground; at
+z=30 it still sits inside the ground on any map whose terrain rises above 30 m at the origin — the
+test map's origin was on a 59 m hill. Because LOS marches against `obstructionAt`, a platform buried
+in terrain occludes every target and every sensor reports nothing while still looking correct in
+review. Measuring the mast from local terrain is what real platforms do, and it makes the failure mode
+impossible rather than merely unlikely.
+
+---
+
+## D7 — Track correlation is gate-based only; `truth_ref` never links observations (M2)
+
+**Decision.** `createTracker` correlates observations purely by the PRD §9.3 gate (bearing ±8°,
+range ±15% or ±150 m). `truth_ref` is recorded on the track for scoring but is never consulted when
+deciding whether two observations belong together.
+
+**Why.** The tracker originally fell back to matching on `truth_ref`, which merged two targets 180°
+apart into one track whenever they happened to share an entity id. Beyond being wrong, it violates the
+truth-leak boundary in spirit: the fusion layer would be using oracle information to make an
+operational decision. Scorers may read `truth_ref` after the fact; the physics may not.
+
+---
+
+## D8 — Fusion keeps the best confidence per source, not the evidence list (M2)
+
+**Decision.** Each track carries `best_by_source: Map<SensorId, number>`, which is what fusion
+combines, plus a bounded `evidence` window (32 observations) for the AAR.
+
+**Why.** `1 − Π(1 − c_i)` is only valid across *independent* sources. Recomputing it from every
+retained observation would let one radar returning every 50 ms masquerade as strong corroboration and
+drive confidence toward 1. Keying on the best value per sensor makes the independence assumption
+explicit, and it means the retained evidence window can be bounded instead of growing for the length of
+the scenario.
+
+---
+
+## D9 — World update order is fixed and documented (M2)
+
+**Decision.** `world.ts` ticks in a fixed order: spawn → behaviour → swarm rule → impacts → drills →
+1 Hz truth state. The order is part of the simulation's contract, not an implementation detail.
+
+**Why.** Anything that draws randomness or mutates shared state makes update order observable in the
+event log. Two systems updated in the opposite order would produce different logs for the same seed,
+which would read as a determinism bug. Naming the order here means changing it is a deliberate act with
+a documented blast radius.
+
+---
+
+## D10 — `flight_plan` joins the sensor vocabulary in `shared` (M2)
+
+**Decision.** `SENSOR_IDS` gains `flight_plan`, alongside `visual`, `ir`, `radar`, `rf`.
+
+**Why.** PRD §9.2 lists flight-plan as one of the five sensors, so it needs to be representable in the
+event catalogue and the sensor suite. It is the deconfliction channel and the only source that cannot
+produce a false alarm, which is what makes ignoring it scoreable as a critical error. Adding the id in
+`shared` rather than only in `sim-core` keeps the vocabulary single-sourced.
