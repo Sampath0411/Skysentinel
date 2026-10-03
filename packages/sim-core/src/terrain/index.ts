@@ -8,7 +8,7 @@
 import type { TerrainType } from "@skysentinel/shared";
 
 import { createRuralTerrain, type RuralTerrain } from "./rural.js";
-import type { Terrain } from "./types.js";
+import { DEFAULT_TERRAIN_SIZE, type Terrain } from "./types.js";
 import { createUrbanTerrain, type UrbanTerrain } from "./urban.js";
 
 export { clampToMap, DEFAULT_TERRAIN_SIZE, lineIsClear, LOS_SAMPLES } from "./types.js";
@@ -24,18 +24,24 @@ export const createTerrain = (
   seed: number,
   size?: number,
 ): Terrain => {
-  const s = size ?? 2000;
+  const s = size ?? DEFAULT_TERRAIN_SIZE;
   return kind === "urban" ? createUrbanTerrain(seed, s) : createRuralTerrain(seed, s);
 };
 
-/** Narrowing helper for code that knows it is dealing with an urban map. */
+/**
+ * Narrowing helper for code that knows it is dealing with an urban map.
+ *
+ * Re-checks `kind` rather than casting: narrowing a `Terrain` union by its `kind`
+ * discriminant is not possible because the generator-specific members are declared
+ * on separate interfaces rather than as a discriminated union.
+ */
 export const asUrban = (t: Terrain): UrbanTerrain => {
   if (t.kind !== "urban") throw new Error(`Expected urban terrain, got ${t.kind}`);
-  return t;
+  return t as UrbanTerrain;
 };
 
 /** Narrowing helper for code that knows it is dealing with a rural map. */
 export const asRural = (t: Terrain): RuralTerrain => {
   if (t.kind !== "rural") throw new Error(`Expected rural terrain, got ${t.kind}`);
-  return t;
+  return t as RuralTerrain;
 };

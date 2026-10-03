@@ -33,7 +33,7 @@ export interface Building {
 }
 
 /** Block pitch, in metres: one block plus its street. */
-const BLOCK_PITCH = 120;
+export const BLOCK_PITCH = 120;
 /** Street width inside each pitch. */
 const STREET_W = 30;
 
