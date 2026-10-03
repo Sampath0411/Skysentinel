@@ -1,0 +1,126 @@
+{
+  "id": "default-v1",
+  "version": 1,
+  "_comment": [
+    "FICTIONAL TRAINING PARAMETERS (PRD §10).",
+    "Weights, curves and the classification matrix are training defaults for this simulator only.",
+    "They are not a Service assessment standard and must not be presented as one.",
+    "Editable by admin with version history (FR-SCR-8)."
+  ],
+  "weights": {
+    "detection": 25,
+    "classification": 25,
+    "response": 20,
+    "reporting": 10,
+    "prioritisation": 10,
+    "coordination": 5,
+    "adaptation": 5
+  },
+  "mandated_dimensions": ["detection", "classification", "response"],
+  "detection": {
+    "curve": [
+      { "x": 1.0, "y": 100 },
+      { "x": 2.0, "y": 40 },
+      { "x": 4.0, "y": 0 }
+    ],
+    "latency_divisor_cap": 4.0
+  },
+  "classification": {
+    "_comment": "rows = expected band (knowability at time t), cols = declared category.",
+    "matrix": {
+      "friendly": {
+        "friendly": 100, "authorised": 95, "unknown": 55,
+        "suspicious": 20, "hostile": 10, "non_uas": 25
+      },
+      "authorised": {
+        "friendly": 95, "authorised": 100, "unknown": 55,
+        "suspicious": 20, "hostile": 10, "non_uas": 25
+      },
+      "unknown": {
+        "friendly": 20, "authorised": 20, "unknown": 100,
+        "suspicious": 70, "hostile": 40, "non_uas": 30
+      },
+      "suspicious": {
+        "friendly": 10, "authorised": 10, "unknown": 70,
+        "suspicious": 100, "hostile": 75, "non_uas": 10
+      },
+      "hostile": {
+        "friendly": 5, "authorised": 5, "unknown": 40,
+        "suspicious": 75, "hostile": 100, "non_uas": 10
+      },
+      "non_uas": {
+        "non_uas": 100, "unknown": 70, "friendly": 30,
+        "authorised": 30, "suspicious": 10, "hostile": 5
+      }
+    },
+    "non_uas_for_real_threat": 10,
+    "reclassify_toward_truth_bonus": 10,
+    "reclassify_bonus_cap": 100,
+    "confidence_policy": {
+      "overconfidence_penalty": 25,
+      "underconfidence_penalty": 10,
+      "order": ["low", "medium", "high"]
+    }
+  },
+  "reporting": {
+    "field_presence_points": 35,
+    "position_tolerance_points": 25,
+    "bearing_tolerance_deg": 15.0,
+    "range_tolerance_frac": 0.25,
+    "range_tolerance_abs_m": 120.0,
+    "quantity_points": 15,
+    "activity_points": 15,
+    "promptness_points": 10,
+    "promptness_window_s": 30,
+    "update_after_change_bonus": 5
+  },
+  "response": {
+    "_comment": "Policy-level workflow only (PRD §4). No operational detail is modelled.",
+    "allowed": {
+      "friendly": ["continue_observe", "assign_track_owner", "stand_down", "report"],
+      "authorised": ["continue_observe", "assign_track_owner", "stand_down", "report"],
+      "unknown": [
+        "continue_observe", "request_sensor_cue", "report",
+        "assign_track_owner", "handover"
+      ],
+      "suspicious": [
+        "continue_observe", "request_sensor_cue", "report",
+        "assign_track_owner", "handover",
+        "issue_warning", "activate_protective_drill", "request_support",
+        "request_response_authority"
+      ],
+      "hostile": [
+        "continue_observe", "request_sensor_cue", "report",
+        "assign_track_owner", "handover",
+        "issue_warning", "activate_protective_drill", "request_support",
+        "request_response_authority", "execute_response"
+      ],
+      "non_uas": ["continue_observe", "report", "assign_track_owner", "stand_down"]
+    },
+    "late_after_par": 1.5,
+    "late_score_low": 40,
+    "late_score_high": 80,
+    "passive_only_score": 30,
+    "authority_required_before_execute_response": true
+  },
+  "coordination": {
+    "brief_not_viewed_penalty": 10,
+    "brief_credit": 15,
+    "owner_assigned_credit": 20,
+    "cop_update_credit": 15
+  },
+  "adaptation": {
+    "reacquire_par_ms": 15000,
+    "reacquire_full_credit": 100,
+    "reacquire_zero_credit": 20
+  },
+  "critical": {
+    "FRATRICIDE": 30,
+    "UNAUTHORISED_ACTION": 25,
+    "MISSED_THREAT": 20,
+    "FALSE_HOSTILE_ON_FRIENDLY": 20,
+    "NO_WARNING_BEFORE_IMPACT": 15,
+    "IGNORED_FLIGHT_PLAN": 10
+  },
+  "clamp": { "min": 0, "max": 100 }
+}

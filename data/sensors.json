@@ -1,0 +1,69 @@
+{
+  "_comment": [
+    "FICTIONAL TRAINING PARAMETERS (PRD §4, §9.1, §9.2).",
+    "These numbers exist only to make the simulator internally consistent and tunable.",
+    "They are not derived from, and must not be presented as, real sensor performance,",
+    "real thresholds, real ranges or real doctrine. All are safe to expose in a classroom."
+  ],
+  "environment": {
+    "light": { "day": 1.0, "dusk": 0.45, "night": 0.08 },
+    "vis": { "clear": 1.0, "haze": 0.7, "rain": 0.55, "fog": 0.35, "dust": 0.45 },
+    "ir_pen": { "clear": 1.0, "haze": 0.9, "rain": 0.7, "fog": 0.5, "dust": 0.6 },
+    "ir_boost": { "night": 1.3, "dusk": 1.1, "day": 0.9 },
+    "rf_noise": { "rural": 1.0, "urban": 1.8 }
+  },
+  "sensors": {
+    "visual": {
+      "label": "EO / visual",
+      "r0_m": 900,
+      "reference_size_m": 0.4,
+      "zoom_factors": [1.0, 2.0, 4.0],
+      "fov_deg": 12.0,
+      "ambiguous_beyond_frac": 0.6
+    },
+    "ir": {
+      "label": "IR / thermal",
+      "r0_m": 700,
+      "reference_size_m": 0.4,
+      "fov_deg": 10.0,
+      "heat_contrast": { "drone": 0.9, "bird": 0.5, "vehicle": 0.8 },
+      "clutter_rate_per_s": { "rural": 0.15, "urban": 0.45 }
+    },
+    "radar": {
+      "label": "Radar-like",
+      "r0_m": 4000,
+      "scan_period_ms": 3000,
+      "v_min_mps": 2.5,
+      "doppler_miss_factor": 0.6,
+      "sigma_range_base_m": 5.0,
+      "sigma_range_per_m": 0.01,
+      "sigma_bearing_base_deg": 1.0,
+      "sigma_bearing_per_m_deg": 0.002,
+      "sigma_alt_m": 60.0,
+      "false_track_lambda": { "rural": 0.35, "urban": 0.9 },
+      "gate_bearing_deg": 8.0,
+      "gate_range_frac": 0.15,
+      "gate_range_abs_m": 150.0,
+      "t_lost_ms": 8000
+    },
+    "rf": {
+      "label": "RF-like",
+      "r0_m": 1500,
+      "p_detect_in_range": 0.9,
+      "doa_sigma_base_deg": 8.0,
+      "false_alert_rate_per_s": 0.02,
+      "band_label": "SIM-BAND-A"
+    }
+  },
+  "modes": {
+    "normal": { "range_multiplier": 1.0, "noise_multiplier": 1.0 },
+    "degraded": { "range_multiplier": 0.5, "noise_multiplier": 2.0 },
+    "intermittent": {
+      "range_multiplier": 1.0,
+      "noise_multiplier": 1.0,
+      "dropout_window_min_ms": 10000,
+      "dropout_window_max_ms": 30000
+    },
+    "failed": { "range_multiplier": 0.0, "noise_multiplier": 0.0 }
+  }
+}

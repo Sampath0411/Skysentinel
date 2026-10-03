@@ -1,0 +1,34 @@
+{
+  "name": "skysentinel",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "pnpm -r --if-present build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -b --pretty",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "pnpm typecheck && pnpm lint && pnpm test",
+    "sim:run": "pnpm --filter @skysentinel/bots run sim:run",
+    "scenario:validate": "pnpm --filter @skysentinel/scenario run scenario:validate",
+    "scenario:generate": "pnpm --filter @skysentinel/scenario run scenario:generate",
+    "scenario:fuzz": "pnpm --filter @skysentinel/scenario run scenario:fuzz",
+    "seed:demo": "pnpm --filter @skysentinel/bots run seed:demo",
+    "verify-offline": "node scripts/verify-offline.mjs",
+    "dev": "pnpm --parallel --filter \"./packages/*\" --filter \"./apps/*\" run dev"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@types/node": "^22.10.2",
+    "eslint": "^9.17.0",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.1",
+    "vitest": "^2.1.8"
+  }
+}

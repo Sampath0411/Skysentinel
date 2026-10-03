@@ -1,0 +1,73 @@
+{
+  "_comment": [
+    "FICTIONAL TRAINING PARAMETERS (PRD §8.5). Difficulty is configuration, not code.",
+    "Levels 1-5 are a training abstraction. They are not calibrated against any real course."
+  ],
+  "levels": {
+    "1": {
+      "threat_count": [1, 1],
+      "time_of_day": ["day"],
+      "weather": ["clear"],
+      "sensor_modes": { "visual": "normal", "ir": "normal", "radar": "normal", "rf": "normal" },
+      "distractors": [],
+      "support_cue": "full_accurate",
+      "swarm": false,
+      "par_factor": 1.5
+    },
+    "2": {
+      "threat_count": [1, 1],
+      "time_of_day": ["day", "dusk"],
+      "weather": ["clear", "haze"],
+      "sensor_modes": { "visual": "normal", "ir": "normal", "radar": "normal", "rf": "intermittent" },
+      "distractors": ["bird_flock"],
+      "support_cue": "full_accurate",
+      "swarm": false,
+      "par_factor": 1.25
+    },
+    "3": {
+      "threat_count": [1, 2],
+      "time_of_day": ["dusk", "night"],
+      "weather": ["haze", "rain"],
+      "sensor_modes": { "visual": "degraded", "ir": "normal", "radar": "normal", "rf": "normal" },
+      "distractors": ["friendly_logistics", "bird_flock"],
+      "support_cue": "partial_no_p",
+      "swarm": false,
+      "par_factor": 1.0
+    },
+    "4": {
+      "threat_count": [2, 4],
+      "time_of_day": ["night"],
+      "weather": ["rain", "fog"],
+      "sensor_modes": { "visual": "degraded", "ir": "normal", "radar": "normal", "rf": "intermittent" },
+      "distractors": ["friendly_logistics", "bird_flock", "neutral_civil"],
+      "support_cue": "hidden",
+      "swarm": "small",
+      "par_factor": 0.85
+    },
+    "5": {
+      "threat_count": [5, 10],
+      "time_of_day": ["night"],
+      "weather": ["fog", "dust"],
+      "sensor_modes": { "visual": "degraded", "ir": "normal", "radar": "normal", "rf": "intermittent" },
+      "distractors": ["friendly_logistics", "neutral_civil", "bird_flock"],
+      "stale_flight_data": true,
+      "mid_run_sensor_failure": true,
+      "support_cue": "hidden",
+      "swarm": "decoy_main_reactive",
+      "par_factor": 0.7
+    }
+  },
+  "timing": {
+    "_comment": "PRD §8.4 rule 5: minimum seconds between first detectable and impact.",
+    "d1_d2_min_gap_s": 25,
+    "d5_min_gap_s": 12
+  },
+  "support_cue": {
+    "_comment": "PRD §5.2 FR-SEN-8. Cue is advisory text only; it never alters classification or scoring.",
+    "confidence_at_levels": {
+      "full_accurate": 0.05,
+      "partial_no_p": 0.15,
+      "hidden": 0.0
+    }
+  }
+}

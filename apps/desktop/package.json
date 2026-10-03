@@ -1,0 +1,9 @@
+{
+  "name": "@skysentinel/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "echo \"desktop: scaffolded in M9\""
+  }
+}

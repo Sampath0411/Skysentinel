@@ -1,0 +1,31 @@
+{
+  "name": "@skysentinel/bots",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b",
+    "test": "vitest run --root .",
+    "dev": "echo stub-bots"
+  },
+  "dependencies": {
+    "@skysentinel/shared": "workspace:*",
+    "@skysentinel/sim-core": "workspace:*",
+    "@skysentinel/scenario": "workspace:*",
+    "@skysentinel/scoring": "workspace:*",
+    "@skysentinel/adaptive": "workspace:*"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.8",
+    "typescript": "^5.7.2"
+  }
+}

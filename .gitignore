@@ -1,0 +1,34 @@
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+*.log
+
+# local SQLite + session data (never commit runtime data)
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+apps/server/.data/
+
+# packaging output
+apps/desktop/out/
+apps/desktop/dist/
+apps/client/dist/
+
+# exports produced at runtime
+exports/
+
+# editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# never commit secrets (PRD §17)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
