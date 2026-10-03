@@ -9,3 +9,7 @@ export * from "./archetypes.js";
 export * from "./entities.js";
 export * from "./behaviours.js";
 export * from "./events.js";
+export * from "./swarm.js";
+export * from "./impact.js";
+export * from "./response.js";
+export * from "./world.js";

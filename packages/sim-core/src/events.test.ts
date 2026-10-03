@@ -37,8 +37,8 @@ describe("event emitter", () => {
       // trainee request must not downgrade them.
       const payload =
         type === "entity_spawned"
-          ? { entity_id: "d1", archetype: "quad_recon" as const, pos: { x: 0, y: 0, z: 100 }, affiliation_truth: "hostile" as const }
-          : { entity_id: "d1", pos: { x: 1, y: 1, z: 100 }, vel: { x: 0, y: 0, z: 0 }, behaviour_state: "transit" as const };
+          ? { id: "d1", archetype: "quad_recon", affiliation_truth: "hostile" as const, intent: "recon" }
+          : { id: "d1", pos: [1, 1, 100] as [number, number, number], vel: [0, 0, 0] as [number, number, number], behaviour_state: "transit" as const };
 
       const ev = em.emit(type, payload as never, { visibility: "trainee" });
       expect(ev.visibility).toBe("instructor");
@@ -67,10 +67,10 @@ describe("event emitter", () => {
     const em = createEventEmitter();
     em.emit("session_started", { scenario_id: "s", seed: 1 });
     em.emit("entity_spawned", {
-      entity_id: "d1",
+      id: "d1",
       archetype: "quad_recon",
-      pos: { x: 0, y: 0, z: 100 },
       affiliation_truth: "hostile",
+      intent: "recon",
     });
     em.emit("contact_marked", { entity_id: "d1", category: "uas" });
 
@@ -85,9 +85,9 @@ describe("event emitter", () => {
       for (let t = 0; t < 50; t++) {
         em.setTime(t * 50);
         em.emit("entity_state", {
-          entity_id: `d${t % 3}`,
-          pos: { x: t, y: t * 2, z: 100 },
-          vel: { x: 1, y: 0, z: 0 },
+          id: `d${t % 3}`,
+          pos: [t, t * 2, 100] as [number, number, number],
+          vel: [1, 0, 0] as [number, number, number],
           behaviour_state: "transit",
         });
       }
