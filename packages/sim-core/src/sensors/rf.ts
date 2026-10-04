@@ -33,15 +33,10 @@ export const createRFSensor = (): Sensor => ({
     for (const e of entities) {
       if (e.neutralised || e.landed || !e.rf_emitting) continue;
 
-      const r = range2d(ctx.observer_pos, e.pos);
-      if (r > PARAMS.max_range_m) continue;
+      const p = this.detectProbability(e, ctx);
+      if (p <= 0) continue;
 
-      let p = PARAMS.p_detect_base * (1 - r / PARAMS.max_range_m);
-      p *= 1 / ctx.environment.factors.rf_noise;
-
-      if (this.mode === "degraded") p *= 0.65;
       if (this.mode === "intermittent" && ctx.rng.chance(0.5)) continue;
-
       if (!ctx.rng.chance(p)) continue;
 
       const trueBearing = bearingDeg(ctx.observer_pos, e.pos);
@@ -58,6 +53,20 @@ export const createRFSensor = (): Sensor => ({
       });
     }
     return obs;
+  },
+
+  detectProbability(e, ctx) {
+    if (this.mode === "failed") return 0;
+    if (e.neutralised || e.landed || !e.rf_emitting) return 0;
+
+    const r = range2d(ctx.observer_pos, e.pos);
+    if (r > PARAMS.max_range_m) return 0;
+
+    let p = PARAMS.p_detect_base * (1 - r / PARAMS.max_range_m);
+    p *= 1 / ctx.environment.factors.rf_noise;
+
+    if (this.mode === "degraded") p *= 0.65;
+    return Math.min(Math.max(p, 0), 1);
   },
 
   falseAlarmRate(ctx) {

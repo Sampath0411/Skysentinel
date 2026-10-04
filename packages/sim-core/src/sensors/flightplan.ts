@@ -46,6 +46,16 @@ export const createFlightPlanSensor = (): Sensor => ({
     return obs;
   },
 
+  detectProbability(e) {
+    // The feed is a subscription, not a detection: an entity is either on the
+    // published schedule or it is not. Probability is therefore 1 for a listed
+    // entity and 0 for everything else — including entities the feed has not yet
+    // refreshed, which the 1 Hz cadence below handles.
+    if (this.mode === "failed") return 0;
+    if (e.neutralised || e.landed) return 0;
+    return e.flight_ref === undefined ? 0 : 1;
+  },
+
   falseAlarmRate: () => 0,
 
   generateFalseAlarm() {

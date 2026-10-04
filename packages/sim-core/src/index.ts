@@ -16,3 +16,5 @@ export * from "./world.js";
 export * from "./sensors/index.js";
 export * from "./fusion.js";
 export * from "./knowability.js";
+export * from "./authority.js";
+export * from "./session.js";

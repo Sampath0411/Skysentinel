@@ -50,6 +50,17 @@ export interface Sensor {
   mode: SensorMode;
   /** Observe all entities visible to this sensor at this tick. */
   observe(entities: readonly Drone[], ctx: SensorContext): Observation[];
+  /**
+   * Probability this sensor would detect `entity` right now, 0..1.
+   *
+   * Pure: draws no randomness and mutates nothing, so the scenario validator can
+   * ask "could this threat ever be seen?" (FR-SCN-4 rule 1) without consuming the
+   * run's stream or perturbing what the simulation later produces. `observe` is
+   * built on this — it rolls once against this number.
+   *
+   * Returns 0 when the target is out of range, occluded, or the sensor has failed.
+   */
+  detectProbability(entity: Drone, ctx: SensorContext): number;
   /** Sensor-specific false alarm rate per tick. */
   falseAlarmRate(ctx: SensorContext): number;
   /** Generate a false alarm. */

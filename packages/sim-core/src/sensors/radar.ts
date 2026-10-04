@@ -32,33 +32,19 @@ export const createRadarSensor = (): Sensor => ({
     if (this.mode === "failed") return [];
     const obs: Observation[] = [];
 
-    const rfNoise = ctx.environment.factors.rf_noise;
-
     for (const e of entities) {
       if (e.neutralised || e.landed) continue;
-      if (!ctx.terrain.hasLineOfSight(ctx.observer_pos, e.pos)) continue;
 
-      const r = range2d(ctx.observer_pos, e.pos);
-      if (r > PARAMS.max_range_m) continue;
+      const p = this.detectProbability(e, ctx);
+      if (p <= 0) continue;
 
-      const archetype = getArchetype(e.archetype);
-      const rcsMultiplier = archetype.rcs_rel < 0.05 ? 0.5 : archetype.rcs_rel < 0.5 ? 1.0 : 1.3;
-
-      let p = PARAMS.p_detect_base * (1 - r / PARAMS.max_range_m) * rcsMultiplier;
-      p *= 1 / rfNoise;
-
-      if (this.mode === "degraded") p *= 0.7;
+      // The stochastic dropout is applied after the geometric gate, so a target the
+      // radar cannot see anyway costs no draw. That keeps the sensor stream
+      // independent of how many invisible entities happen to be in range.
       if (this.mode === "intermittent" && ctx.rng.chance(0.5)) continue;
-
-      // Urban multipath: buildings near the target create false echoes.
-      if (ctx.terrain.kind === "urban") {
-        const urban = asUrban(ctx.terrain);
-        const nearby = urban.buildingsNear(e.pos.x, e.pos.y, 150);
-        if (nearby.length > 3) p *= 0.8;
-      }
-
       if (!ctx.rng.chance(p)) continue;
 
+      const r = range2d(ctx.observer_pos, e.pos);
       const trueBearing = bearingDeg(ctx.observer_pos, e.pos);
       const noisyBearing = trueBearing + ctx.rng.normal() * PARAMS.bearing_error_deg;
       const noisyRange = r * (1 + ctx.rng.normal() * PARAMS.range_error_frac);
@@ -71,12 +57,46 @@ export const createRadarSensor = (): Sensor => ({
         bearing_deg: (noisyBearing + 360) % 360,
         range_m: Math.max(0, noisyRange),
         speed_mps: Math.max(0, noisySpeed),
-        rcs: rcsClass(archetype.rcs_rel),
+        rcs: rcsClass(getArchetype(e.archetype).rcs_rel),
         confidence: Math.min(Math.max(p, 0.4), 0.98),
         t_ms: ctx.t_ms,
       });
     }
     return obs;
+  },
+
+  /**
+   * Note on urban degradation: `rf_noise` is deliberately *not* applied here.
+   *
+   * It is defined as a bearing-error multiplier (PRD §9.1) and belongs to
+   * `falseAlarmRate` and the passive RF sensor. Urban detection loss for radar
+   * comes from two already-modelled sources: occlusion via `hasLineOfSight`, and
+   * the multipath penalty below. Folding `rf_noise` in as well would stack a 1.8x
+   * penalty on top of both and cap urban radar at 0.47 for a medium target —
+   * below the threshold any urban scenario must clear to be solvable.
+   */
+  detectProbability(e, ctx) {
+    if (this.mode === "failed") return 0;
+    if (e.neutralised || e.landed) return 0;
+    if (!ctx.terrain.hasLineOfSight(ctx.observer_pos, e.pos)) return 0;
+
+    const r = range2d(ctx.observer_pos, e.pos);
+    if (r > PARAMS.max_range_m) return 0;
+
+    const archetype = getArchetype(e.archetype);
+    const rcsMultiplier = archetype.rcs_rel < 0.05 ? 0.5 : archetype.rcs_rel < 0.5 ? 1.0 : 1.3;
+
+    let p = PARAMS.p_detect_base * (1 - r / PARAMS.max_range_m) * rcsMultiplier;
+
+    if (this.mode === "degraded") p *= 0.7;
+
+    // Urban multipath: buildings near the target create false echoes.
+    if (ctx.terrain.kind === "urban") {
+      const urban = asUrban(ctx.terrain);
+      if (urban.buildingsNear(e.pos.x, e.pos.y, 150).length > 3) p *= 0.8;
+    }
+
+    return Math.min(Math.max(p, 0), 1);
   },
 
   falseAlarmRate(ctx) {

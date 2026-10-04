@@ -30,22 +30,11 @@ export const createIRSensor = (): Sensor => ({
 
     for (const e of entities) {
       if (e.neutralised || e.landed) continue;
-      if (!ctx.terrain.hasLineOfSight(ctx.observer_pos, e.pos)) continue;
 
-      const r = range2d(ctx.observer_pos, e.pos);
-      if (r > PARAMS.max_range_m) continue;
+      const p = this.detectProbability(e, ctx);
+      if (p <= 0) continue;
 
-      const archetype = getArchetype(e.archetype);
-      let p = PARAMS.p_detect_base * (1 - r / PARAMS.max_range_m);
-      // IR is all-weather: its own light factor is ~1, but signature differs
-      // sharply between a hot airframe and a cold decoy.
-      p *= archetype.thermal_rel;
-      p *= irMultiplier(ctx.environment);
-      p *= Math.pow(ctx.environment.factors.vis, 0.5);
-
-      if (this.mode === "degraded") p *= 0.6;
       if (this.mode === "intermittent" && ctx.rng.chance(0.5)) continue;
-
       if (!ctx.rng.chance(p)) continue;
 
       const trueBearing = bearingDeg(ctx.observer_pos, e.pos);
@@ -61,6 +50,26 @@ export const createIRSensor = (): Sensor => ({
       });
     }
     return obs;
+  },
+
+  detectProbability(e, ctx) {
+    if (this.mode === "failed") return 0;
+    if (e.neutralised || e.landed) return 0;
+    if (!ctx.terrain.hasLineOfSight(ctx.observer_pos, e.pos)) return 0;
+
+    const r = range2d(ctx.observer_pos, e.pos);
+    if (r > PARAMS.max_range_m) return 0;
+
+    const archetype = getArchetype(e.archetype);
+    let p = PARAMS.p_detect_base * (1 - r / PARAMS.max_range_m);
+    // IR is all-weather: its own light factor is ~1, but signature differs
+    // sharply between a hot airframe and a cold decoy.
+    p *= archetype.thermal_rel;
+    p *= irMultiplier(ctx.environment);
+    p *= Math.pow(ctx.environment.factors.vis, 0.5);
+
+    if (this.mode === "degraded") p *= 0.6;
+    return Math.min(Math.max(p, 0), 1);
   },
 
   falseAlarmRate() {
