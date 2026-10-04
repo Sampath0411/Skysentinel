@@ -19,6 +19,9 @@ apps/client/dist/
 # exports produced at runtime
 exports/
 
+# scratch space for run output during development and matrix testing
+.tmp/
+
 # editor / OS
 .DS_Store
 Thumbs.db

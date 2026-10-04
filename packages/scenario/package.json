@@ -15,10 +15,12 @@
     "build": "tsc -b",
     "typecheck": "tsc -b",
     "test": "vitest run --root .",
+    "scenario:validate": "node dist/cli.js",
     "dev": "echo stub-scenario"
   },
   "dependencies": {
     "@skysentinel/shared": "workspace:*",
+    "@skysentinel/sim-core": "workspace:*",
     "zod": "^3.24.1"
   },
   "devDependencies": {

@@ -129,3 +129,130 @@ a documented blast radius.
 event catalogue and the sensor suite. It is the deconfliction channel and the only source that cannot
 produce a false alarm, which is what makes ignoring it scoreable as a critical error. Adding the id in
 `shared` rather than only in `sim-core` keeps the vocabulary single-sourced.
+
+---
+
+## D11 — Radar detection probability has no independent RF-noise term (M2)
+
+**Decision.** `radar.ts` detection probability is built from range, aspect, RCS, environment and
+terrain masking only. The `rf` stream no longer feeds a separate noise multiplier into radar
+detection. RF is instead a sensor in its own right: `rf.ts` produces the emissions and geolocation
+observations that feed classification.
+
+**Why.** Radar and the RF sensor were originally two readings of the same physical fact — whether
+something is radiating — which double-counted it. That had two costs. A scenario with a strong jammer
+or a dense RF environment suppressed radar as well, so an `rf` failure mode silently became a radar
+failure mode; and it made the two sensors perfectly correlated, which defeats the point of a
+multi-sensor fusion trainer where corroboration across *independent* sources is the thing being
+taught (cf. D8). Keeping radar a radar and RF an RF sensor is also what makes an `rf` outage a
+recognisably different exercise from a `radar` outage.
+
+---
+
+## D12 — Corroboration and visibility are separate thresholds (M2)
+
+**Decision.** Track `confirmed` status requires two *distinct* sensor sources (D7/D8), while
+`track.confidence` is a separate continuous quantity from `1 − Π(1 − c_i)`. A track can be
+high-confidence on one source without being confirmed, and confirmed without being high-confidence.
+
+**Why.** Conflating "we believe this assessment" with "we have seen this from more than one place"
+makes the fusion rule either too strict (demanding high confidence before corroboration, so a weak
+but consistently-observed target never confirms) or too loose (confirming on repeated sightings from
+one sensor, which is exactly the D8 failure mode). PRD §9.3 asks for both properties and they are
+genuinely different, so they are modelled as different numbers.
+
+---
+
+## D13 — Rule 5 measures arrival, not issuance (M2)
+
+**Decision.** Every timing rule in `data/doctrine.json` measures the interval from when the *event
+reached the relevant actor* to when the trainee responded. Where a rule's clock should start at
+issuance instead, the rule carries an explicit `clock` field rather than relying on the default.
+
+**Why.** With RF and comms delay modelled, "time to classify" is ambiguous: a cue that fires at
+t=10 s but whose track does not become usable until t=18 s cannot be classified at t=11 s, and
+scoring the gap as the trainee's delay would punish them for the sensor model. Anchoring on arrival
+measures the decision the trainee actually made. Making the default explicit means a future rule can
+opt out of it visibly instead of by accident.
+
+---
+
+## D14 — Scenario schema gained an `injects` array (M3)
+
+**Decision.** `Scenario` accepts `injects: { at_t_ms, type, params }[]`, applied by the session
+harness in time order. `type` is a closed set (`sensor_outage`, and room for M7's generated
+perturbations); unknown types emit `inject_applied` and are otherwise inert rather than throwing.
+
+**Why.** FR-SIM-9 requires runtime perturbations, and M7's generator needs to produce them
+procedurally. Without them in the schema a generator could only vary the opening state, so every
+generated scenario would be a static picture. Inert-unknown is deliberate: a generated scenario
+carrying an inject type this build does not implement should still run, because a trainer that
+refuses to start over an unrecognised annotation is worse than one that ignores it.
+
+---
+
+## D15 — Time of day is a single `dusk` level, not a `day`/`dusk` pair (M3)
+
+**Decision.** `data/difficulty.json` carries one lighting level, `dusk`. There is no `day` level.
+
+**Why.** Day and dusk differ mainly in whether EO/IR are usable at all, and a scenario where the EO/IR
+operator is blind is a different exercise, not a harder version of the same one. Keeping both would
+have meant difficulty quietly controlling sensor availability, which is scenario authoring's job
+(`sensors` modes in the scenario, already used for the scripted `failed` sensors). The rename from
+the PRD's `day` keeps the vocabulary honest about what the level models.
+
+---
+
+## D16 — The session harness lives in sim-core, not bots (M3)
+
+**Decision.** `packages/sim-core/src/session.ts` owns the authoritative trainee-facing loop: world
+tick → sensors → fusion → knowability → authority, plus `TraineeControls`. The bots package supplies
+policies and `build.ts`, and imports it.
+
+**Why.** Three callers need the identical loop — the bots (now), the M5 server driving a live session
+from socket messages, and capped/fuzz runs. `@skysentinel/scenario` depends on `sim-core`, so
+`session.ts` cannot import the `Scenario` type without a cycle; it takes a structural `SessionSpec`
+instead and `build.ts` adapts. That is the one concession: the alternative — a harness in `bots` —
+would make the server depend on the bot package, which is not what that package is for.
+
+---
+
+## D17 — `track_update` is sampled at 1 Hz, but status changes always emit (M3)
+
+**Decision.** Track state is emitted on a 1 Hz boundary (`TRACK_UPDATE_PERIOD_MS`), matching the
+`entity_state` cadence. `track_lost` and `track_reacquired` are emitted immediately on transition.
+
+**Why.** Emitting every track every tick produced 18 538 `track_update` events for one 15-minute
+scenario, making the event log the largest artefact the system produces and a JSONL replay unreadable.
+A trainee-facing stream does not need 20 Hz track state to act on. Status *changes* are excluded from
+the sampling deliberately: losing and reacquiring a track is the event a trainee must notice, and it
+must not fall between two 1 Hz boundaries.
+
+---
+
+## D18 — One authority request per track, and bots hold focus (M3)
+
+**Decision.** `AuthorityState.queue` supersedes any pending request for the same track. Bot policies
+keep a `focus` track and make at most one authority request per track, treating "requested, neither
+pending nor granted" as a refusal.
+
+**Why.** Both halves fix the same symptom — an operator re-asking forever. A bot that re-requests
+every tick on an unconfirmed track generates 44 requests for one track and never acts, which scores as
+noise rather than as the failure mode it represents. Superseding on re-request is also correct in its
+own right: a trainee who revises their call to `unknown` after asking for hostile authority has
+withdrawn the grounds, and granting on the stale grounds would be wrong. The bot-side `focus` is what
+makes a track get worked to completion — the first version always picked the *best* undeclared track,
+so no track ever reached a response.
+
+---
+
+## D19 — `contact_marked` carries only the cue id (M3, PRD §4)
+
+**Decision.** `markContact` emits `{ cue_or_track_id }`. It does not link the contact to the track or
+to the underlying truth entity.
+
+**Why.** An earlier version emitted `linked_truth_id`, which is in `FORBIDDEN_TRAINEE_KEYS`. It would
+have been stripped at the server boundary, but it was still ground truth sitting in an event whose
+visibility is `trainee` — the boundary would have been doing the work that the emitter should have
+done. The server can recover the link from the cue id, which is all a client needs, and the truth
+correlation stays where the rule says it belongs: internal, for scoring only.
