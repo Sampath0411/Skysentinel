@@ -90,6 +90,19 @@ export const createTracker = (): Tracker => {
   let tracks: Track[] = [];
   let nextId = 1;
 
+  /**
+   * Squared bearing error, for ranking gate matches by nearness.
+   *
+   * Ranking on bearing alone is enough to break a gate tie, and deliberately so:
+   * range is frequently unmeasured (the RF sensor reports none), so a distance
+   * metric that fell back to range would silently ignore whichever track had it.
+   * Bearing is always available, so the ranking is always the same comparison.
+   */
+  const bearingError = (a: Observation, b: Observation): number => {
+    const d = bearingDeltaDeg(a.bearing_deg, b.bearing_deg);
+    return d * d;
+  };
+
   const fuse = (track: Track, obs: Observation): void => {
     // Keep the most recent measurement per field; sensors that do not measure a
     // field leave the previous value alone rather than zeroing it.
@@ -126,7 +139,28 @@ export const createTracker = (): Tracker => {
         // Correlation is gate-based only. `truth_ref` is never allowed to link two
         // observations: doing so would let a scorer artefact override the physics
         // and merge two genuinely different targets into one track.
-        const match = tracks.find((t) => prev(t) !== undefined && withinGate(prev(t)!, obs));
+        //
+        // Among the tracks inside the gate the *nearest* one wins, not the first.
+        // This is nearest-neighbour association, and taking the first instead was a
+        // real defect with a real consequence: in the urban swarm scenario a decoy
+        // and the friendly's flight-plan return pass through the same gate for a
+        // few seconds, and whichever track happened to be earlier in the list won
+        // the plan observation. A hostile decoy ended up carrying `flight_plan` as a
+        // source, which is the single strongest deconfliction signal in the
+        // scenario — so a competent bot read the hostile as an authorised flight
+        // and stood down. Ordering in the tracker list is not evidence of
+        // proximity, and treating it as such made the deconfliction channel invert.
+        let match: Track | undefined;
+        let best_error = Number.POSITIVE_INFINITY;
+        for (const t of tracks) {
+          const last = prev(t);
+          if (last === undefined || !withinGate(last, obs)) continue;
+          const err = bearingError(last, obs);
+          if (err < best_error) {
+            best_error = err;
+            match = t;
+          }
+        }
 
         if (match) {
           match.evidence.push(obs);

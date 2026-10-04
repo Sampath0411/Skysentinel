@@ -32,7 +32,7 @@
  * fast one.
  */
 
-import type { AnySimEvent, Millis } from "@skysentinel/shared";
+import type { AnySimEvent, Millis, ReportFields } from "@skysentinel/shared";
 import type {
   ClassificationCategory,
   Confidence,
@@ -79,6 +79,15 @@ export interface SessionSpec {
   posture: Posture;
   /** Seconds before a report reaches the chain. Exercises report discipline. */
   comms_delay_s: number;
+  /**
+   * The sections a mission brief offers, and that a trainee may consult.
+   *
+   * Not content — just the headings the console can open. N4 and N9 score whether
+   * the brief was read before deciding, so the brief has to be something a
+   * trainee can actually read; until the control existed, that credit was
+   * unreachable on a real run and every bot scored zero on it.
+   */
+  brief_sections: readonly string[];
   /** Authored runtime injects (FR-SIM-9), applied in time order. */
   injects: readonly { at_t_ms: Millis; type: string; params: Record<string, unknown> }[];
 }
@@ -132,6 +141,8 @@ export interface TraineeView {
   /** Cue ids not yet acted on. */
   pending_cues: readonly string[];
   authority: { posture: string; granted: readonly string[]; pending: readonly string[] };
+  /** The sections this mission's brief offers. The trainee may open any of them. */
+  brief_sections: readonly string[];
   over: boolean;
 }
 
@@ -145,11 +156,30 @@ export interface TraineeControls {
     confidence: Confidence;
     platform?: string;
   }): boolean;
-  report(args: { track_id?: string; quantity?: number; bearing_deg?: number; range_m?: number }): boolean;
+  /**
+   * Report up the chain.
+   *
+   * `activity` and `description` are part of a usable report (PRD §7.3): a bearing
+   * and a range alone do not tell a chain operator what is looking at them. Both
+   * are free text and are not checked against truth — see D24 for why.
+   */
+  report(args: {
+    track_id?: string;
+    quantity?: number;
+    bearing_deg?: number;
+    range_m?: number;
+    activity?: string;
+    description?: string;
+  }): boolean;
   /** Take any non-classification action. Returns false when inapplicable. */
   act(action: ResponseAction, args?: { track_id?: string; asset_id?: string }): boolean;
   /** Ask for response authority on a track. False for an unknown track. */
   requestAuthority(track_id: string): boolean;
+  /**
+   * Consult the mission brief. Records which sections were opened, which N4 and
+   * N9 score against. Returns false for a section this brief does not have.
+   */
+  viewBrief(sections?: readonly string[]): boolean;
 }
 
 /** One tick handed to a policy: the view plus the controls to act on it. */
@@ -182,6 +212,15 @@ export interface Session {
   controls(): TraineeControls;
   /** Internal tracks, `truth_ref` included. Scoring and AAR only. */
   tracks(): readonly Track[];
+  /**
+   * Every cue and track id this run produced, mapped to the entity behind it.
+   *
+   * Scoring correlation only, and accumulated for the whole run rather than read
+   * off the live tracker — the tracker drops retired tracks, so `tracks()` after a
+   * run correlates only the contacts still alive at the end. A track id is mapped
+   * to `null` when it was fused from clutter alone and has no entity behind it.
+   */
+  correlation(): { cue_truth: ReadonlyMap<string, string>; track_truth: ReadonlyMap<string, string | null> };
   knowability(track_id: string): Knowability | undefined;
   authority(): AuthorityState;
   cues(): readonly Cue[];
@@ -222,6 +261,18 @@ export const createSession = (params: SessionParams): Session => {
   const acts: TraineeAction[] = [];
   let ended = false;
 
+  /**
+   * Cue and track ids → the truth entity behind them, accumulated for the whole run.
+   *
+   * Never pruned. A track that is lost or retired still has a classification, an
+   * action and a report against it in the log, and all of those need to resolve
+   * back to an entity long after the tracker has forgotten the track.
+   */
+  const cueTruth = new Map<string, string>();
+  const trackTruth = new Map<string, string | null>();
+  const firstSeenTruth = new Set<string>();
+  const seenFalseObs = new Set<string>();
+
   /** Sensors able to contribute, in the suite's fixed order. */
   const activeSensors = (): Sensor[] => sensors.filter((s) => s.mode !== "failed");
 
@@ -235,7 +286,24 @@ export const createSession = (params: SessionParams): Session => {
       t_ms,
       observer_pos: spec.observer_pos,
     };
-    const airborne = world.entities().filter((e): e is Drone => e.kind === "drone");
+    // Entities that exist *now*: airborne, not landed or neutralised, and past
+    // their spawn time.
+    //
+    // The spawn-time filter is load-bearing and was missing. Every sensor checks
+    // `neutralised` and `landed` but none of them check `spawn_t_ms`, because each
+    // sensor only sees the list it is handed — so with no filter here, a drone
+    // scheduled to appear at t=260 s was detectable from t=0, sitting at its
+    // authored start position. That is not a scoring nuance: it gave the swarm
+    // scenario's neutral civilian a track from t=45 s, and a bot that correctly
+    // classified everything it could see was then punished for calling the
+    // long-dormant civilian a threat. The scenario said the civilian arrives late;
+    // the simulation had it on scope the whole time.
+    const airborne = world
+      .entities()
+      .filter(
+        (e): e is Drone =>
+          e.kind === "drone" && t_ms >= e.spawn_t_ms && !e.neutralised && !e.landed,
+      );
 
     const observations: Observation[] = [];
     for (const sensor of activeSensors()) {
@@ -253,12 +321,72 @@ export const createSession = (params: SessionParams): Session => {
         t_ms,
         truth_ref: o.truth_ref,
       });
+      cueTruth.set(cueList[cueList.length - 1]!.cue_id, o.truth_ref);
       emitter.emit("cue_presented", { cue_id: cueList[cueList.length - 1]!.cue_id, sensor: o.sensor, first_for_truth: true });
     }
 
     const before = new Map(tracker.tracks().map((t) => [t.track_id, t.status]));
     const tracks = tracker.update(observations);
     tracker.tick(t_ms);
+
+    // Raw sensor pictures, for the console scopes and for N6's position check.
+    //
+    // Sampled on the same 1 Hz boundary as `track_update` (D17): at 20 Hz these
+    // dominate the log, and the trainee acts on a picture, not on twenty frames a
+    // second of the same one.
+    //
+    // These events were previously never emitted at all — the type existed, was
+    // schema-checked, was stripped of `truth_ref` for trainees, and nothing
+    // produced one. That left the radar and radio scopes with nothing to draw and
+    // left report position unscorable on a real run.
+    //
+    // The first sighting of each entity, and of one clutter contact per sensor, is
+    // emitted *regardless* of the boundary. That case is not an optimisation: a cue
+    // and the report it prompts often fall in the same 50 ms tick, and a report
+    // emitted before any `sensor_observation` has no measurement for N6 to judge
+    // it against — the trainee is marked down for a position they could not have
+    // known. A contact that appears and vanishes between two boundaries would
+    // likewise never appear in the log at all.
+    const first_sightings = new Set<string>();
+    for (const o of observations) {
+      if (!o.truth_ref) {
+        // One clutter contact per sensor per run is enough for the scope to show
+        // what a false alarm looks like without flooding the log with them.
+        if (seenFalseObs.has(o.sensor)) continue;
+        seenFalseObs.add(o.sensor);
+        first_sightings.add(o.obs_id);
+      } else if (!firstSeenTruth.has(o.truth_ref)) {
+        firstSeenTruth.add(o.truth_ref);
+        first_sightings.add(o.obs_id);
+      }
+    }
+
+    const on_boundary = t_ms % TRACK_UPDATE_PERIOD_MS === 0;
+    for (const o of observations) {
+      const is_first = first_sightings.has(o.obs_id);
+      if (!is_first && !on_boundary) continue;
+      // A first sighting already logged this tick; the boundary pass must not log
+      // it a second time under the same `obs_id`.
+      if (!is_first && !o.truth_ref) continue;
+      emitter.emit("sensor_observation", {
+        sensor: o.sensor,
+        obs_id: o.obs_id,
+        truth_ref: o.truth_ref === "" ? undefined : o.truth_ref,
+        bearing_deg: o.bearing_deg,
+        range_m: o.range_m ?? 0,
+        alt_m: o.altitude_m ?? 0,
+        conf: o.confidence,
+        is_false: o.truth_ref === "",
+        ...(o.rcs === undefined ? {} : { shape: o.rcs }),
+      });
+    }
+
+    // Track ids are recorded as they are first seen, because the tracker drops
+    // retired tracks: reading `tracker.tracks()` after the run would correlate
+    // only the last few contacts and leave every earlier one's events unattributed.
+    for (const t of tracks) {
+      if (!trackTruth.has(t.track_id)) trackTruth.set(t.track_id, t.truth_ref);
+    }
 
     for (const t of tracks) {
       // Track updates are sampled at 1 Hz, on the same cadence as `entity_state`.
@@ -349,6 +477,7 @@ export const createSession = (params: SessionParams): Session => {
       tracks: tracks.map(toTraineeTrack),
       knowability,
       pending_cues: cueList.filter((c) => !markedCues.has(c.cue_id)).map((c) => c.cue_id),
+      brief_sections: spec.brief_sections,
       authority: {
         posture: authority.posture,
         granted: [...authority.granted.keys()].sort(),
@@ -404,12 +533,15 @@ export const createSession = (params: SessionParams): Session => {
 
     report(args) {
       const delay_ms = Math.round(spec.comms_delay_s * 1000);
+      const fields: ReportFields = {
+        ...(args.quantity !== undefined ? { quantity: args.quantity } : {}),
+        ...(args.bearing_deg !== undefined ? { bearing_deg: args.bearing_deg } : {}),
+        ...(args.range_m !== undefined ? { range_m: args.range_m } : {}),
+        ...(args.activity !== undefined ? { activity: args.activity } : {}),
+        ...(args.description !== undefined ? { description: args.description } : {}),
+      };
       emitter.emit("report_sent", {
-        fields: {
-          ...(args.quantity !== undefined ? { quantity: args.quantity } : {}),
-          ...(args.bearing_deg !== undefined ? { bearing_deg: args.bearing_deg } : {}),
-          ...(args.range_m !== undefined ? { range_m: args.range_m } : {}),
-        },
+        fields,
         ...(args.track_id ? { linked_track_id: args.track_id } : {}),
         delay_ms,
       });
@@ -420,11 +552,24 @@ export const createSession = (params: SessionParams): Session => {
         ...(args.quantity !== undefined ? { quantity: args.quantity } : {}),
         ...(args.bearing_deg !== undefined ? { bearing_deg: args.bearing_deg } : {}),
         ...(args.range_m !== undefined ? { range_m: args.range_m } : {}),
+        ...(args.activity !== undefined ? { activity: args.activity } : {}),
+        ...(args.description !== undefined ? { description: args.description } : {}),
       });
       return true;
     },
 
     act: (action, args) => record(action, args),
+
+    viewBrief(sections) {
+      // Default to the whole brief: opening the brief at all is the scored act, and
+      // a console that made the trainee tick each heading to earn the credit would
+      // be measuring clicking, not preparation.
+      const asked = sections ?? spec.brief_sections;
+      const known = asked.filter((s) => spec.brief_sections.includes(s));
+      if (known.length === 0) return false;
+      emitter.emit("brief_viewed", { sections_viewed: known });
+      return true;
+    },
 
     requestAuthority(track_id) {
       const track = tracker.tracks().find((t) => t.track_id === track_id);
@@ -472,6 +617,7 @@ export const createSession = (params: SessionParams): Session => {
     traineeView: view,
     controls: () => controls,
     tracks: () => tracker.tracks(),
+    correlation: () => ({ cue_truth: new Map(cueTruth), track_truth: new Map(trackTruth) }),
     knowability: (id) => {
       const t = tracker.tracks().find((x) => x.track_id === id);
       return t ? assessKnowability(t) : undefined;

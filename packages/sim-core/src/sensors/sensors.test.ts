@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Millis } from "@skysentinel/shared";
+import { bearingDeltaDeg } from "@skysentinel/shared";
 
 import { createEnvironment } from "../environment.js";
 import type { Drone } from "../entities.js";
@@ -223,6 +224,36 @@ describe("flight-plan sensor (FR-SEN-5)", () => {
     const withPlan = () => [target({ flight_ref: "plan-1" })];
     expect(fp.observe(withPlan(), ctx({ t_ms: 1000 }))).toHaveLength(1);
     expect(fp.observe(withPlan(), ctx({ t_ms: 1050 }))).toHaveLength(0);
+  });
+
+  it("reports the contact's true bearing and range, not a placeholder", () => {
+    // The plan feed is the deconfliction channel, and correlation is gate-based on
+    // bearing. Reporting a constant bearing put every listed flight 90°+ away from
+    // the radar return for the same aircraft, so a friendly opened its own track and
+    // the operator saw one aircraft as two contacts — the plan track and the radar
+    // track — neither of which deconflicted anything.
+    //
+    // Table-driven over the four quadrants from a known origin, because a single
+    // case would sit on top of the old hardcoded placeholder and pass. Two details
+    // are load-bearing: `ctx`'s default observer sits on the terrain's high point
+    // rather than at the origin, and bearings are measured `atan2(dx, dy)` — north
+    // is +y at 0°, so east is 90°, not the 0° the old placeholder claimed.
+    const cases = [
+      { pos: { x: 0, y: 1000, z: 120 }, bearing_deg: 0 },
+      { pos: { x: 1000, y: 0, z: 120 }, bearing_deg: 90 },
+      { pos: { x: 0, y: -1000, z: 120 }, bearing_deg: 180 },
+      { pos: { x: -1000, y: 0, z: 120 }, bearing_deg: 270 },
+    ];
+    const fp = createFlightPlanSensor();
+    for (const { pos, bearing_deg } of cases) {
+      const obs = fp.observe(
+        [target({ flight_ref: "plan-1", pos })],
+        ctx({ t_ms: 1000, observer_pos: { x: 0, y: 0, z: 0 } }),
+      );
+      expect(obs, `bearing ${bearing_deg}`).toHaveLength(1);
+      expect(bearingDeltaDeg(obs[0]!.bearing_deg, bearing_deg)).toBeCloseTo(0, 6);
+      expect(obs[0]!.range_m).toBeCloseTo(1000, 6);
+    }
   });
 
   it("cannot generate false alarms", () => {

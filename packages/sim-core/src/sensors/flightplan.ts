@@ -10,7 +10,7 @@
  * "ignored the flight plan" a detectable error (FR-SCR / CRITICAL_ERRORS).
  */
 
-import { range2d } from "@skysentinel/shared";
+import { bearingDeg, range2d } from "@skysentinel/shared";
 
 import type { Observation, Sensor } from "./types.js";
 
@@ -30,13 +30,23 @@ export const createFlightPlanSensor = (): Sensor => ({
       // The feed is periodic, not per-tick: it refreshes once a second.
       if (ctx.t_ms % 1000 !== 0) continue;
 
+      // The feed reports the contact's true bearing and range, not a placeholder.
+      //
+      // This was hardcoded to `bearing_deg: 0`, which is defensible as a *policy*
+      // statement — "this entity is on the plan" — and wrong as a *position*. The
+      // tracker's correlation gate compares bearings, so every listed flight landed
+      // 90°+ away from the radar return for the same aircraft and opened its own
+      // track. An operator then saw a friendly flight as two separate contacts: one
+      // radar track with no plan, and one plan track with no radar. The deconfliction
+      // channel existed and still did not deconflict anything, and the bots' only
+      // way to behave well was to ignore the track that named the friendly flight.
       const r = range2d(ctx.observer_pos, e.pos);
 
       obs.push({
         sensor: "flight_plan",
         obs_id: `fp_${ctx.t_ms}_${e.id}`,
         truth_ref: e.id,
-        bearing_deg: 0,
+        bearing_deg: bearingDeg(ctx.observer_pos, e.pos),
         range_m: r,
         speed_mps: e.speed_mps,
         confidence: 1,

@@ -10,7 +10,7 @@
  * uncertainty is rewarded; one who guesses confidently is not.
  */
 
-import type { Affiliation, Confidence } from "@skysentinel/shared";
+import type { ClassificationCategory, Confidence } from "@skysentinel/shared";
 
 import type { Track } from "./fusion.js";
 
@@ -19,8 +19,20 @@ export type KnowabilityBand = "low" | "medium" | "high";
 
 export interface Knowability {
   band: KnowabilityBand;
-  /** The affiliation a reasonable analyst would call at this evidence level. */
-  expected_affiliation: Affiliation | "unknown";
+  /**
+   * The category a reasonable analyst would call at this evidence level.
+   *
+   * Named `expected_category` rather than `expected_affiliation` because it spans
+   * all six `ClassificationCategory` values. `Affiliation` is the four-value truth
+   * vocabulary and has no `unknown`, `suspicious` or `non_uas` — those are analyst
+   * calls, not facts about an object, which is exactly why the scorer compares a
+   * declaration against this rather than against truth (PRD §9.4).
+   *
+   * This is the *evidence-only* call. The scorer may widen it using scenario truth
+   * (a matching flight plan, a loiter profile) before indexing the rubric matrix,
+   * because only it can see truth. See `expectedCategory` in `@skysentinel/scoring`.
+   */
+  expected_category: ClassificationCategory;
   /** The confidence a reasonable analyst would attach. */
   expected_confidence: Confidence;
   /** Which channels contributed. Reported to the trainee as an explanation. */
@@ -82,17 +94,28 @@ export const assessKnowability = (track: Track): Knowability => {
 
   // At `low` the honest call is unknown. At `high` the evidence supports a call.
   // `medium` supports a call only if more than one sensor saw it.
-  const expected_affiliation: Knowability["expected_affiliation"] =
+  const expected_category: Knowability["expected_category"] =
     band === "high" ? "hostile" : band === "medium" && multi_sensor ? "hostile" : "unknown";
 
   const expected_confidence: Confidence = band === "high" ? "high" : band === "medium" ? "medium" : "low";
 
-  return { band, expected_affiliation, expected_confidence, evidence, multi_sensor };
+  return { band, expected_category, expected_confidence, evidence, multi_sensor };
 };
 
-/** Points for a declaration, given what was knowable. 0..1. */
-export const scoreDeclaration = (declared: Affiliation | "unknown", k: Knowability): number => {
-  if (declared === k.expected_affiliation) return 1;
+/**
+ * Coarse 0..1 credit for a declaration, given what was knowable.
+ *
+ * This is the honest-uncertainty mechanic in miniature: an "unknown" on a
+ * `medium` band is a better answer than a confident "hostile", because the second
+ * was not supported by the evidence the trainee actually had.
+ *
+ * The scorer does **not** use this for points. It indexes the rubric's
+ * classification matrix instead, so that every threshold lives in
+ * `data/*.json` per CLAUDE.md. This stays exported for the trainee-facing
+ * explanation and for tests that state the principle directly.
+ */
+export const scoreDeclaration = (declared: ClassificationCategory, k: Knowability): number => {
+  if (declared === k.expected_category) return 1;
   // A cautious "unknown" on a `medium` band is only a partial match, not full credit.
   if (declared === "unknown" && k.band === "high") return 0.4;
   // Claiming a call the evidence did not support.

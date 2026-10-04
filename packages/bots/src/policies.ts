@@ -17,6 +17,7 @@ import type { BotPolicy, BotTurn, TraineeView } from "@skysentinel/sim-core";
 import {
   ATTENTION,
   AUTHORITY_DISCIPLINE,
+  BRIEF_DISCIPLINE,
   CORROBORATION_DISCIPLINE,
   REACTION_TICKS,
   REPORT_DISCIPLINE,
@@ -24,6 +25,7 @@ import {
   type BotRng,
   categoryFor,
   createBotRng,
+  isThreatCategory,
   type BotName,
 } from "./policy.js";
 
@@ -50,6 +52,12 @@ interface Memory {
   requested: Set<string>;
   /** Track id → sim time it was first acted on, for latency. */
   first_action: Map<string, Millis>;
+  /** Track id → whether this bot will report it at all. Drawn once, not per tick. */
+  will_report: Map<string, boolean>;
+  /** Track id → whether this bot will warn on it. Drawn once, not per tick. */
+  will_warn: Map<string, boolean>;
+  /** Whether the mission brief has been opened this run. */
+  briefed: boolean;
   /** The track currently being worked. Held until the bot is done with it. */
   focus?: string;
 }
@@ -62,7 +70,32 @@ const memory = (): Memory => ({
   reported: new Set(),
   requested: new Set(),
   first_action: new Map(),
+  will_report: new Map(),
+  will_warn: new Map(),
+  briefed: false,
 });
+
+/**
+ * Draw a bot's willingness to do an obligation on a track — once, and remember it.
+ *
+ * This was `rng.chance(p)` re-rolled on every tick, which made discipline a
+ * per-tick coin flip rather than a property of the operator. The visible symptom:
+ * `passive` gets about ten decision ticks on a track it is working, so a
+ * probability of 0.35 resolved to "declined" for most tracks it ever touched, and
+ * it finished runs having reported nothing at all — which is not passivity, it is
+ * muteness, and it made the bot score below the pure-noise control.
+ *
+ * Drawn once per track instead, the number means what the rubric tables say it
+ * means: the share of contacts this operator bothers to pass up the chain. The draw
+ * still comes from the seeded RNG, so runs stay reproducible.
+ */
+const commits = (cache: Map<string, boolean>, m_rng: BotRng, id: string, p: number): boolean => {
+  const cached = cache.get(id);
+  if (cached !== undefined) return cached;
+  const yes = m_rng.chance(p);
+  cache.set(id, yes);
+  return yes;
+};
 
 /** Mark any newly-pending cues. Returns true if anything was marked. */
 const takeCues = (turn: BotTurn, m: Memory): void => {
@@ -70,6 +103,21 @@ const takeCues = (turn: BotTurn, m: Memory): void => {
     if (m.marked.has(cue_id)) continue;
     if (turn.controls.markContact(cue_id)) m.marked.add(cue_id);
   }
+};
+
+/**
+ * Open the mission brief, if this bot has the discipline to.
+ *
+ * Attempted once, before any contact is worked. N4 and N9 score whether the brief
+ * was read before deciding, so a bot that reads it *after* its first declaration
+ * is not credited — and it is worth modelling that ordering, because a brief read
+ * after the decision has already been made is exactly the failure the rubric is
+ * built to catch.
+ */
+const takeBrief = (turn: BotTurn, m: Memory, rng: BotRng, p: number): void => {
+  if (m.briefed) return;
+  if (!rng.chance(p)) return;
+  if (turn.controls.viewBrief()) m.briefed = true;
 };
 
 /**
@@ -100,6 +148,20 @@ const nextTrack = (
 };
 
 /**
+ * Has this bot finished with a track, counting a track it has no reason to act on?
+ *
+ * The obvious reading of "finished" is "acted on", and that is wrong. A competent
+ * operator classifies the friendly flight, decides there is nothing to do about it,
+ * and moves to the next contact — it does not stand on the friendly for the rest
+ * of the mission. Reading it as "acted on" meant `expert` held focus on the
+ * deconfliction scenario's friendly from t=0 to t=175 s, and responded to the
+ * protected-asset threat 145 s after the rubric's par. The bot that models good
+ * practice was teaching bad prioritisation.
+ */
+const isWorked = (m: Memory, id: string): boolean =>
+  m.acted.has(id) || (m.declared.has(id) && !isThreatCategory(m.declared.get(id)));
+
+/**
  * `expert` — the reference competent trainee.
  *
  * Behaviour, in the order a competent operator actually works:
@@ -121,6 +183,8 @@ export const expertPolicy = (seed: number): BotPolicy => {
   return (turn: BotTurn): void => {
     ticks++;
     if (turn.view.over) return;
+    // Before the cues, not after: the brief is meant to be read first.
+    takeBrief(turn, m, rng, BRIEF_DISCIPLINE.expert);
     takeCues(turn, m);
 
     /** Requested and neither pending nor granted: the answer was no. */
@@ -137,7 +201,7 @@ export const expertPolicy = (seed: number): BotPolicy => {
     // has come back refused: an operator who has been denied does not stand and
     // re-request every tick, and a bot that did would flood the event log and
     // never get to the next track.
-    const id = nextTrack(turn.view, m, (x) => m.acted.has(x) || refused(x));
+    const id = nextTrack(turn.view, m, (x) => refused(x) || isWorked(m, x));
     if (!id) return;
     const track = turn.view.tracks.find((t) => t.track_id === id);
     if (!track) return;
@@ -163,6 +227,7 @@ export const expertPolicy = (seed: number): BotPolicy => {
     // Ask for authority once, then wait for it. `authority.pending` and `granted`
     // come from the harness, so the bot cannot assume its own request was granted.
     if (
+      isThreatCategory(m.declared.get(id)) &&
       !m.requested.has(id) &&
       !turn.view.authority.granted.includes(id) &&
       rng.chance(AUTHORITY_DISCIPLINE.expert) &&
@@ -170,7 +235,15 @@ export const expertPolicy = (seed: number): BotPolicy => {
     ) {
       m.requested.add(id);
     }
-    if (turn.view.authority.granted.includes(id) && !m.acted.has(id)) {
+    // Granted authority plus a reason to use it. Authority to respond is not a
+    // licence to respond to anything: the bot must have concluded the contact is a
+    // threat first, or a deconfliction scenario has `expert` engaging listed
+    // traffic it just correctly identified as authorised.
+    if (
+      turn.view.authority.granted.includes(id) &&
+      !m.acted.has(id) &&
+      isThreatCategory(m.declared.get(id))
+    ) {
       turn.controls.act("execute_response", { track_id: id });
       m.acted.add(id);
     }
@@ -193,6 +266,7 @@ export const novicePolicy = (seed: number): BotPolicy => {
   return (turn: BotTurn): void => {
     ticks++;
     if (turn.view.over) return;
+    takeBrief(turn, m, rng, BRIEF_DISCIPLINE.novice);
     takeCues(turn, m);
 
     /** Requested and neither pending nor granted: the answer was no. */
@@ -203,7 +277,7 @@ export const novicePolicy = (seed: number): BotPolicy => {
 
     if (ticks % REACTION_TICKS.novice !== 0 && !rng.chance(ATTENTION.novice)) return;
 
-    const id = nextTrack(turn.view, m, (x) => m.acted.has(x) || refused(x));
+    const id = nextTrack(turn.view, m, (x) => refused(x) || isWorked(m, x));
     if (!id) return;
 
     if (!m.declared.has(id)) {
@@ -217,6 +291,7 @@ export const novicePolicy = (seed: number): BotPolicy => {
     warn2(turn, m, rng, id, WARN_DISCIPLINE.novice);
 
     if (
+      isThreatCategory(m.declared.get(id)) &&
       !m.requested.has(id) &&
       !turn.view.authority.granted.includes(id) &&
       rng.chance(AUTHORITY_DISCIPLINE.novice) &&
@@ -225,7 +300,13 @@ export const novicePolicy = (seed: number): BotPolicy => {
       m.requested.add(id);
     }
     // Acts on the granted authority when it has it, and on nothing when it does not.
-    if (turn.view.authority.granted.includes(id) && !m.acted.has(id)) {
+    // Gated on the bot's own belief rather than ungated like `trigger_happy`: a
+    // novice forgets to corroborate, not to notice what it just called the contact.
+    if (
+      turn.view.authority.granted.includes(id) &&
+      !m.acted.has(id) &&
+      isThreatCategory(m.declared.get(id))
+    ) {
       turn.controls.act("execute_response", { track_id: id });
       m.acted.add(id);
     }
@@ -253,6 +334,11 @@ export const triggerHappyPolicy = (seed: number): BotPolicy => {
   return (turn: BotTurn): void => {
     ticks++;
     if (turn.view.over) return;
+    // `BRIEF_DISCIPLINE.trigger_happy` is 0, so this is a draw that never lands:
+    // the profile goes straight to the scope without reading the brief. Attempted
+    // rather than skipped so the discipline is expressed as behaviour, not as an
+    // absence of code.
+    takeBrief(turn, m, rng, BRIEF_DISCIPLINE.trigger_happy);
     takeCues(turn, m);
     if (ticks % REACTION_TICKS.trigger_happy !== 0) return;
 
@@ -270,7 +356,10 @@ export const triggerHappyPolicy = (seed: number): BotPolicy => {
     report2(turn, m, rng, id, REPORT_DISCIPLINE.trigger_happy);
     warn2(turn, m, rng, id, WARN_DISCIPLINE.trigger_happy);
 
-    // Acts on the freshest track it has not yet acted on, authorised or not.
+    // Acts on the freshest track it has not yet acted on, authorised or not — and
+    // deliberately ungated on its own belief, unlike every other policy. Responding
+    // to a contact it cannot justify responding to, before any authority exists, is
+    // the whole failure this bot exists to produce (PRD §10.5).
     turn.controls.act("execute_response", { track_id: id });
     m.acted.add(id);
   };
@@ -295,7 +384,10 @@ export const passivePolicy = (seed: number): BotPolicy => {
     if (!rng.chance(ATTENTION.passive)) return;
     if (ticks % REACTION_TICKS.passive !== 0) return;
 
-    // Contacts are still marked — noticing is not the problem.
+    // Contacts are still marked — noticing is not the problem. The brief is read
+    // too: passive is careful and slow, which is a different failure from
+    // trigger_happy's careless and fast.
+    takeBrief(turn, m, rng, BRIEF_DISCIPLINE.passive);
     takeCues(turn, m);
 
     const id = nextTrack(turn.view, m, (x) => m.declared.has(x));
@@ -331,6 +423,7 @@ export const randomPolicy = (seed: number): BotPolicy => {
     ticks++;
     if (turn.view.over) return;
     if (ticks % REACTION_TICKS.random !== 0) return;
+    takeBrief(turn, m, rng, BRIEF_DISCIPLINE.random);
     takeCues(turn, m);
 
     /** Requested and neither pending nor granted: the answer was no. */
@@ -354,6 +447,7 @@ export const randomPolicy = (seed: number): BotPolicy => {
     warn2(turn, m, rng, id, WARN_DISCIPLINE.random);
 
     if (
+      isThreatCategory(m.declared.get(id)) &&
       !m.requested.has(id) &&
       !turn.view.authority.granted.includes(id) &&
       rng.chance(AUTHORITY_DISCIPLINE.random) &&
@@ -361,7 +455,11 @@ export const randomPolicy = (seed: number): BotPolicy => {
     ) {
       m.requested.add(id);
     }
-    if (!m.acted.has(id) && rng.chance(0.4)) {
+    // Acts on tracks it believes are threats, as the profile's contract says. The
+    // randomness that matters is *which* tracks those are and *when*, not that it
+    // engages friendly traffic — the latter is trigger_happy's error, and having two
+    // bots commit it would make the control condition indistinguishable.
+    if (!m.acted.has(id) && isThreatCategory(m.declared.get(id)) && rng.chance(0.4)) {
       turn.controls.act("execute_response", { track_id: id });
       m.acted.add(id);
     }
@@ -374,26 +472,51 @@ export const randomPolicy = (seed: number): BotPolicy => {
  * Returns nothing on purpose. These obligations are independent per tick, and an
  * earlier version returned a boolean the caller used to `return` early — which
  * meant a high-discipline step like reporting silently starved every step after it.
+ *
+ * `activity` and `description` are derived from what the bot actually concluded, so
+ * the report agrees with the declaration it is reporting. A bot that sent a
+ * placeholder in those fields would be scored for having withheld a judgement, which
+ * is a different (and separately taught) failure from reporting badly.
  */
 const report2 = (turn: BotTurn, m: Memory, rng: BotRng, id: string, p: number): void => {
   if (m.reported.has(id)) return;
-  if (!rng.chance(p)) return;
+  if (!commits(m.will_report, rng, id, p)) return;
   const track = turn.view.tracks.find((t) => t.track_id === id);
+  const belief = m.declared.get(id) ?? "unknown";
   turn.controls.report({
     track_id: id,
     quantity: 1,
+    activity: ACTIVITY_BY_CATEGORY[belief] ?? "unknown",
+    description: `single airborne contact, bearing ${Math.round(track?.bearing_deg ?? 0)}`,
     ...(track ? { bearing_deg: track.bearing_deg } : {}),
     ...(track?.range_m !== undefined ? { range_m: track.range_m } : {}),
   });
   m.reported.add(id);
 };
 
+/**
+ * The activity a bot reports for each category it can declare.
+ *
+ * Plain functional descriptions rather than the scenarios' `intent` strings: those
+ * are the answer key, and a bot that echoed them would be reading truth. The scorer
+ * does not check these for correctness (D24) — what it checks is that a judgement
+ * was offered rather than passed back up the chain.
+ */
+const ACTIVITY_BY_CATEGORY: Record<string, string> = {
+  hostile: "uncoordinated inbound",
+  suspicious: "unidentified, uncoordinated",
+  authorised: "published flight plan, authorised",
+  friendly: "recognised friendly flight",
+  non_uas: "assessed as non-c UAS",
+  unknown: "unable to assess",
+};
+
 /** Issue a warning on a track the bot believes is a threat. */
 const warn2 = (turn: BotTurn, m: Memory, rng: BotRng, id: string, p: number): void => {
   if (m.warned.has(id)) return;
   const belief = m.declared.get(id);
-  if (belief !== "hostile" && belief !== "suspicious") return;
-  if (!rng.chance(p)) return;
+  if (!isThreatCategory(belief)) return;
+  if (!commits(m.will_warn, rng, id, p)) return;
   turn.controls.act("issue_warning", { track_id: id });
   m.warned.add(id);
 };

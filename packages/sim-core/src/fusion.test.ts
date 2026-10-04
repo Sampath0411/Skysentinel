@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { Millis } from "@skysentinel/shared";
+import { CLASSIFICATION_CATEGORIES, type Millis } from "@skysentinel/shared";
 
 import {
   GATE_BEARING_DEG,
@@ -113,6 +113,63 @@ describe("tracker", () => {
     expect(tracks).toHaveLength(2);
   });
 
+  it("associates to the nearest in-gate track, not the first one", () => {
+    // Two tracks 16° apart — outside each other's gate, so they stay separate —
+    // and a plan observation at 90 that is inside both gates and nearer to the
+    // first. Created in the order [82, 98]; the observation belongs to the 82 track.
+    //
+    // Taking the first in-gate track instead was a real defect: the list is sorted
+    // by observation id, so a decoy that happened to sort earlier absorbed the
+    // friendly's flight-plan return and came out carrying `flight_plan` as a source
+    // — the strongest deconfliction signal in the scenario, on the wrong aircraft.
+    // Nearest-neighbour association is what stops the deconfliction channel
+    // inverting.
+    const t = createTracker();
+    t.update([
+      obs({ obs_id: "a", bearing_deg: 82, truth_ref: "decoy" }),
+      obs({ obs_id: "b", bearing_deg: 98, truth_ref: "friendly" }),
+    ]);
+    expect(t.tracks()).toHaveLength(2);
+
+    const tracks = t.update([
+      obs({ obs_id: "c", sensor: "flight_plan", bearing_deg: 90, range_m: undefined }),
+    ]);
+
+    expect(tracks).toHaveLength(2);
+    const decoy = tracks.find((x) => x.truth_ref === "decoy")!;
+    const friendly = tracks.find((x) => x.truth_ref === "friendly")!;
+    expect(decoy.sources).toContain("flight_plan");
+    expect(friendly.sources).not.toContain("flight_plan");
+  });
+
+  it("ranks gate matches on bearing, not on range", () => {
+    // The RF sensor reports no range at all, so a ranking metric that preferred
+    // range would silently ignore whichever candidate had one — and the RF return
+    // is exactly the observation whose association matters most. Bearing is always
+    // available, so the metric must be bearing.
+    //
+    // Here the better *bearing* match is the track that sorts second and has no
+    // range: 5° away against the ranged track's 7°. A metric that fell back to
+    // range would have preferred the ranged track, since the observation carries
+    // none to compare.
+    const t = createTracker();
+    t.update([
+      obs({ obs_id: "a", bearing_deg: 83, range_m: 500, truth_ref: "ranged" }),
+      obs({ obs_id: "b", bearing_deg: 95, range_m: undefined, truth_ref: "unmeasured" }),
+    ]);
+
+    const tracks = t.update([obs({ obs_id: "c", sensor: "rf", bearing_deg: 90, range_m: undefined })]);
+
+    expect(tracks.find((x) => x.truth_ref === "unmeasured")!.sources).toContain("rf");
+    expect(tracks.find((x) => x.truth_ref === "ranged")!.sources).not.toContain("rf");
+  });
+
+  it("opens a new track when nothing is inside the gate", () => {
+    const t = createTracker();
+    t.update([obs({ obs_id: "a", bearing_deg: 0 })]);
+    expect(t.update([obs({ obs_id: "b", bearing_deg: 100 })])).toHaveLength(2);
+  });
+
   it("does not let one sensor's repeats inflate confidence", () => {
     // One radar return at 0.9, and twenty of them at 0.9, must give the same
     // confidence: repeated looks at the same thing are not independent evidence.
@@ -196,7 +253,7 @@ describe("knowability (PRD §9.4, FR-SCR-7)", () => {
   it("a weak detection is low and expects unknown", () => {
     const weak = assessKnowability(track({ status: "new", sources: ["visual"], confidence: 0.3, range_m: undefined }));
     expect(weak.band).toBe("low");
-    expect(weak.expected_affiliation).toBe("unknown");
+    expect(weak.expected_category).toBe("unknown");
   });
 
   it("scores an honest unknown above an unsupported confident call", () => {
@@ -213,7 +270,7 @@ describe("knowability (PRD §9.4, FR-SCR-7)", () => {
 
   it("rewards the right call when the evidence supports one", () => {
     const k = assessKnowability(track({ status: "confirmed", sources: ["radar", "visual"], confidence: 0.85 }));
-    expect(k.expected_affiliation).toBe("hostile");
+    expect(k.expected_category).toBe("hostile");
     expect(scoreDeclaration("hostile", k)).toBe(1);
     expect(scoreDeclaration("unknown", k)).toBeLessThan(1);
   });
@@ -222,7 +279,7 @@ describe("knowability (PRD §9.4, FR-SCR-7)", () => {
     const k = assessKnowability(track({ status: "new", sources: ["radar"], confidence: 0.6 }));
     expect(k.band).toBe("medium");
     // Medium + single sensor cannot support a call, so unknown is the honest answer.
-    expect(k.expected_affiliation).toBe("unknown");
+    expect(k.expected_category).toBe("unknown");
   });
 
   it("always produces a non-empty explanation", () => {
@@ -235,13 +292,23 @@ describe("knowability (PRD §9.4, FR-SCR-7)", () => {
     }
   });
 
-  it("scores are always within [0, 1]", () => {
+  it("scores are always within [0, 1] for all six declared categories", () => {
     const k = assessKnowability(track());
-    for (const d of ["hostile", "friendly", "authorised", "non_uas", "unknown"] as const) {
+    // `suspicious` is included because it is a category a trainee may declare and
+    // `scoreDeclaration` must accept the same vocabulary it does (PRD §9.4).
+    for (const d of CLASSIFICATION_CATEGORIES) {
       const s = scoreDeclaration(d, k);
       expect(s).toBeGreaterThanOrEqual(0);
       expect(s).toBeLessThanOrEqual(1);
     }
+  });
+
+  it("accepts exactly the six classification categories, not the four affiliations", () => {
+    // The mismatch this guards: `Affiliation` has no `unknown`, `suspicious` or
+    // `non_uas`, so a scorer typed against it could not represent what a trainee
+    // actually declares.
+    expect(CLASSIFICATION_CATEGORIES).toHaveLength(6);
+    expect(assessKnowability(track()).expected_category).not.toBe("non_uas");
   });
 });
 

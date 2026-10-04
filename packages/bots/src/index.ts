@@ -9,7 +9,11 @@ export {
 export {
   runScenario,
 } from "./run.js";
-export type { RunOptions, RunResult } from "./run.js";
+export type { RunOptions, RunResult, ServerSideTruth } from "./run.js";
+
+export {
+  scoreInputFor,
+} from "./score-input.js";
 
 export {
   BOT_NAMES,

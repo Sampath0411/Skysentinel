@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 
 import { SCRIPTED_SCENARIOS, nightRecon01 } from "./scripted/index.js";
 import {
+  BRIEF_SECTIONS,
   INJECT_TYPES,
   SCENARIO_SCHEMA_VERSION,
   ScenarioSchema,
@@ -166,6 +167,30 @@ describe("defaults", () => {
     expect(r.scenario.assets[0]!.impact_radius_m).toBe(15);
     expect(r.scenario.observer_post.sectors).toEqual([]);
     expect(r.scenario.authority.response_assets).toEqual({ available: true, delay_s: 6 });
+    expect(r.scenario.brief_sections).toEqual([...BRIEF_SECTIONS]);
+  });
+
+  it("offers only the brief headings a scenario actually has", () => {
+    // The heading list is what the console renders, so it is authored per scenario.
+    // A short scenario with nothing to say about friendly flights should not open
+    // an empty panel — and it must not open one the trainee could tick off for
+    // credit, which N4 and N9 both pay for.
+    const trimmed = draft();
+    trimmed["brief_sections"] = ["situation", "authority", "objectives"];
+    const r = parseScenario(trimmed);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.scenario.brief_sections).toEqual(["situation", "authority", "objectives"]);
+  });
+
+  it("rejects an empty or unknown brief heading", () => {
+    // Table-driven: an empty list leaves the trainee with no way to read the brief
+    // at all, and an unrecognised heading would render as a blank tab.
+    for (const bad of [[], ["situation", "secrets"], ["SITUATION"]]) {
+      const d = draft();
+      d["brief_sections"] = bad;
+      expect(parseScenario(d).ok, JSON.stringify(bad)).toBe(false);
+    }
   });
 
   it("refuses a scenario with no `expected` block", () => {

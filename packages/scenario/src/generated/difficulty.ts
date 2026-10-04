@@ -4,8 +4,8 @@
  * Source of truth: `data/difficulty.json`
  * Regenerate: `node scripts/gen-data.mjs`
  *
- * Difficulty levels are a training abstraction (PRD §8.5). They are not calibrated
- * against any real course and must not be presented as an assessment standard.
+ * Difficulty levels are a training abstraction (PRD §8.5). They are not calibrated against any real course and must not be
+ * presented as an assessment standard.
  */
 
 import { z } from "zod";

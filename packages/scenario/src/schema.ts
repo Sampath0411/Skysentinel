@@ -203,6 +203,7 @@ export const ExpectedTrackSchema = z.object({
   /** A warning should be issued at least this long before impact. */
   warn_before_s: z.number().min(0).optional(),
 });
+export type ExpectedTrack = z.infer<typeof ExpectedTrackSchema>;
 
 export const ExpectedSchema = z.object({
   tracks: z.array(ExpectedTrackSchema).default([]),
@@ -242,6 +243,27 @@ export const ScenarioInjectSchema = z.object({
 });
 export type ScenarioInject = z.infer<typeof ScenarioInjectSchema>;
 
+/**
+ * The headings a mission brief can offer, in the order the console shows them.
+ *
+ * An enum rather than free strings, so the trainee client can render a real panel
+ * per section and the validator can reject a scenario naming a heading it cannot
+ * draw. `viewBrief` matches against these, so a scenario that omits a section
+ * cannot be credited for reading it.
+ */
+export const BRIEF_SECTIONS = ["situation", "assets", "friendly_flights", "authority", "objectives"] as const;
+export const BriefSectionSchema = z.enum(BRIEF_SECTIONS);
+export type BriefSection = z.infer<typeof BriefSectionSchema>;
+
+/**
+ * Brief headings offered for this scenario. Defaults to the full set.
+ *
+ * A short scenario may genuinely have nothing to say about friendly flights, and a
+ * brief that opens an empty panel teaches nothing — the heading list is what the
+ * console actually renders, so it is authored per scenario rather than assumed.
+ */
+export const BriefSectionsSchema = z.array(BriefSectionSchema).min(1).default([...BRIEF_SECTIONS]);
+
 // --- the scenario ----------------------------------------------------------
 
 export const ScenarioSchema = z
@@ -254,6 +276,8 @@ export const ScenarioSchema = z
     title: z.string().min(1),
     description: z.string().default(""),
     learning_objectives: z.array(z.string().min(1)).default([]),
+    /** Headings the mission brief offers for this scenario (PRD §7.1). */
+    brief_sections: BriefSectionsSchema,
     seed: z.number().int(),
     duration_s: z.number().int().positive(),
     difficulty: z.number().int().min(1).max(5).default(2),

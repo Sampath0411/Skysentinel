@@ -141,6 +141,7 @@ export const buildSession = (scenario: Scenario): Session => {
     grant_rule: grantRuleOf(scenario),
     posture: scenario.authority.initial_posture,
     comms_delay_s: scenario.authority.response_assets.delay_s,
+    brief_sections: scenario.brief_sections,
     injects: scenario.injects.map((i) => ({
       at_t_ms: sToMs(i.at_t_s),
       type: i.type,

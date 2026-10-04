@@ -105,9 +105,15 @@ importers:
 
   packages/scoring:
     dependencies:
+      '@skysentinel/scenario':
+        specifier: workspace:*
+        version: link:../scenario
       '@skysentinel/shared':
         specifier: workspace:*
         version: link:../shared
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
     devDependencies:
       typescript:
         specifier: ^5.7.2

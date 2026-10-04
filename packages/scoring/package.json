@@ -18,7 +18,9 @@
     "dev": "echo stub-scoring"
   },
   "dependencies": {
-    "@skysentinel/shared": "workspace:*"
+    "@skysentinel/scenario": "workspace:*",
+    "@skysentinel/shared": "workspace:*",
+    "zod": "^3.24.1"
   },
   "devDependencies": {
     "vitest": "^2.1.8",

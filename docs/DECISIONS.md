@@ -256,3 +256,217 @@ have been stripped at the server boundary, but it was still ground truth sitting
 visibility is `trainee` — the boundary would have been doing the work that the emitter should have
 done. The server can recover the link from the cue id, which is all a client needs, and the truth
 correlation stays where the rule says it belongs: internal, for scoring only.
+
+---
+
+## D20 — Truth correlation is a scorer *input*, not a log field (M4, PRD §4, §6.4)
+
+**Decision.** `ScoreInput` carries `correlation` (cue→truth, track→truth) and `truth` as arguments
+alongside the event log. The log alone cannot be scored.
+
+**Why.** The alternative — reading `truth_ref` out of the events as the scorer walks them — makes the
+log self-sufficient, and a self-sufficient log is one that has to be filtered before it can be stored,
+streamed or handed to a client. Keeping truth as a separate argument means the thing stored next to a
+session is the same thing that can be sent to a trainee: an event stream with no answer key in it. The
+server holds both halves and joins them at score time.
+
+**Consequence.** `sensor_observation.truth_ref` is the one exception, and it is deliberate: that field
+is documented on the event as internal-only and is stripped by `filterForRole` for trainees. It exists
+so the server does not have to reconstruct observation correlation from scratch. The scorer reads it
+because the scorer runs on the server, and `runScenario` keeps all of it in a `server_side` block that
+`toJsonl` names field-by-field and does not serialise.
+
+---
+
+## D21 — N9 normalises against its own ceiling, not 100 (M4, PRD §10.3)
+
+**Decision.** `scoreCoordination` divides the rubric's coordination credits by the sum of those credits
+(`brief_credit + owner_assigned_credit + cop_update_credit`, read from data) rather than by 100.
+
+**Why.** The rubric expresses coordination as three independent credits that deliberately do not sum to
+100 — they are a checklist, not a curve. Dividing a 50-point maximum by 100 capped a *perfectly*
+coordinated trainee at 50/100 forever, which cost 2.5 of the 5 points PRD §10.2 assigns to the
+dimension for doing everything right. Deriving the ceiling from the same data that awards the credits
+means a rubric author adding a fourth credit changes the ceiling and the score together; they cannot
+drift.
+
+---
+
+## D22 — An unassessed competency is excluded, not scored zero (M4, PRD §10.2)
+
+**Decision.** A competency whose nodes are all zero-max is returned with `assessed: false`, contributes
+zero to the weighted sum, and the remaining weights are renormalised over `100 / assessed_weight`.
+
+**Why.** N8 emits zero-max when only one contact needed attention and N10 when nothing was lost. Both
+are "there was nothing to judge". Charging a trainee the 5 points of `adaptation` for a track that was
+never lost made the score depend on the scenario as much as on the trainee. The alternative — awarding
+full marks — was rejected: a passive trainee acted on no track at all, which would have earned free
+marks in a dimension about *how* attention was spent.
+
+**Consequence.** `CompetencyScore` carries `assessed` explicitly and `coach.ts` has a `not_assessed`
+band separate from `absent`, because "nothing tested it" and "they failed it" must not read the same
+way to a trainee. `points` stays numeric (0) so consumers need no null handling, but the AAR must read
+`assessed`, not the number.
+
+---
+
+## D23 — A reported position is judged against what the sensors had shown (M4, PRD §10.3 N6)
+
+**Decision.** N6 compares a report's bearing and range against the latest genuine `sensor_observation`
+at or before the report's own timestamp. False/clutter observations are excluded when the facts are read.
+
+**Why.** Neither truth nor the final picture is a fair yardstick. Truth penalises a correct report for a
+contact the sensors had not yet located; the last observation in the run penalises it for the contact
+having flown on afterwards. "What you could see when you sent it" is the only rule that treats every
+trainee identically, and it is the rule a trainee would apply to themselves.
+
+**Consequence.** `TrackFacts` accumulates a time-ordered `observations` list rather than a single
+"latest" pair. If the sensors had nothing at all before the report, position scores zero and says so in
+the reason string rather than silently awarding or withholding the points.
+
+---
+
+## D24 — A reported activity is judged on being an assessment, not on being right (M4, PRD §9.4, §10.3 N6)
+
+**Decision.** N6 scores a report's `activity` field for being a substantive description — anything but a
+short, fixed list of placeholders (`unknown`, `n/a`, `tbd`, and similar) — rather than for matching the
+entity's `intent`.
+
+**Why.** The previous rule required the reported activity to contain the truth `intent`, which the
+trainee cannot see (PRD §4). A trainee who accurately described what they could observe was marked down
+for not guessing the word in the answer key, and one who guessed it was rewarded for knowing something
+they had no way of knowing. This is the §9.4 knowability rule stated exactly as the rest of the rubric
+applies it: score against what was knowable, not against what was true.
+
+Whether the activity was *correct* is already scored, and against evidence rather than truth: N5 grades
+the declaration, and N6's `presence_points` reward carrying the field at all. So the rule here checks the
+one thing a log can fairly check — that the trainee committed to a judgement instead of passing the
+question back up the chain. A placeholder is a real failure: it tells the chain operator nothing, and
+withholding a judgement is not the same as being wrong.
+
+**Consequence.** The placeholder list is deliberately short and closed, and must not grow. This is not a
+natural-language classifier; scoring is deterministic rules only (CLAUDE.md), and a fuzzy synonym list
+would make the rubric's behaviour depend on phrasing it never declared. Anything not on the list counts as
+an assessment and is graded by N5. `TraineeControls.report` therefore accepts `activity` and
+`description` as free text and records them verbatim.
+
+---
+
+## D25 — The mission brief is a control the trainee opens, and opening it is the scored act (M4, PRD §7.1)
+
+**Decision.** `TraineeControls.viewBrief(sections?)` emits a `brief_viewed` event. Called bare it opens
+every heading the scenario offers; called with a list it opens those it recognises and silently drops the
+rest. `Scenario.brief_sections` declares which headings exist.
+
+**Why.** N4 and N9 both score briefing discipline, and until this control existed the credit was
+unreachable on a real run — every bot scored zero on it, so the rubric node was untestable rather than
+merely unpassed.
+
+Defaulting to the whole brief is the load-bearing choice. A console that made the trainee tick each
+heading to earn the credit would be measuring clicking, not preparation, and would train a bot to open a
+brief for the points. N9 asks whether the brief was consulted before deciding; it does not ask how many
+tabs were opened.
+
+**Consequence.** `BRIEF_DISCIPLINE` models each profile's likelihood of reading it, with
+`trigger_happy` at 0 — the profile that goes straight to the scope is precisely the habit being trained
+out. `brief_sections` is per-scenario rather than global because the heading list is what the console
+renders: a short scenario with nothing to say about friendly flights should not open an empty tab, and
+an empty tab that pays N9 credit would be worse than none.
+
+---
+
+## D26 — Bot discipline is drawn once per track, not re-rolled per tick (M3, PRD §11.1)
+
+**Decision.** `commits(cache, rng, track_id, p)` draws a bot's willingness to report or warn on a track
+once and remembers it for the rest of the run. The draw still comes from the seeded RNG, so runs stay
+reproducible.
+
+**Why.** This was `rng.chance(p)` re-rolled on every tick, which made a discipline a per-tick coin flip
+rather than a property of the operator. The visible symptom: a bot gets about ten decision ticks on a
+track it is working, so a probability of 0.35 resolved to "declined" for most tracks it ever touched,
+and it finished runs having reported nothing at all. That is not passivity, it is muteness — and it
+scored `passive` *below* the pure-noise `random` control, which is the ordering the M4 DoD asserts should
+not happen.
+
+With one draw per track the number means what the rubric tables say it means: the share of contacts this
+operator bothers to pass up the chain.
+
+**Consequence.** `REPORT_DISCIPLINE.passive` was raised from 0.15 to 0.35 alongside this, and is
+documented at its definition. A passive operator is *more* likely to report than a random one, because
+reporting is not the hard part — acting on it is.
+
+---
+
+## D27 — The §10.7 ordering is asserted on the aggregate, the safety invariants per scenario (M4, PRD §14 M4 DoD)
+
+**Decision.** `expert > novice > passive ≈ random` is asserted on the mean total across all three
+scripted scenarios. `expert > novice` and `trigger_happy` last are asserted per scenario. The
+passive-vs-random band is one full competency weight (10, PRD §10.2's reporting).
+
+**Why.** A per-scenario assertion asked the test to be lucky rather than correct. `random` picks its
+category uniformly from six; on the two-track deconfliction scenario it has a one-in-six chance of naming
+the friendly's category correctly, and that single guess is worth up to 16 points of the 25-weight
+classification competency. If it also reports both tracks it collects the entire 10-weight reporting
+competency that `passive` does not. Thirteen points of swing, arriving from a coin flip, is variance in
+the measurement — not a scorer that has formed an opinion about passivity.
+
+The band is the reporting weight rather than an arbitrary tolerance, because reporting is the *only*
+dimension on which the PRD separates the two profiles: §10.2 scores both as weak response behaviour
+everywhere else. A band narrower than one whole competency would assert the scorer can tell them apart
+better than the rubric can.
+
+**Consequence.** The two per-scenario invariants are asserted because they hold regardless of what any
+individual bot guessed — no arrangement of two or three contacts reverses "corroborate, classify
+honestly, wait for authority, report" against "guess", and the critical-error penalties are absolute
+rather than weighted. A fourth test asserts the table is actually spread (`expert > 50`,
+`trigger_happy == 0`), so that every ordering assertion cannot pass trivially against a scorer that gave
+all five trainees the same number.
+
+---
+
+## D28 — The flight-plan feed reports true position, and correlation picks the nearest track (M2, PRD §9.3)
+
+**Decision.** `flight_plan` observations carry `bearingDeg(observer, entity)` and `range2d`. The tracker
+ranks in-gate candidates by squared bearing error and associates with the minimum.
+
+**Why.** Both were defects found only by the end-to-end ordering probe, and neither was visible in the
+shaped-log fixtures.
+
+The plan feed hardcoded `bearing_deg: 0`. Defensible as a *policy* statement — "this entity is on the
+plan" — and wrong as a *position*: correlation is gate-based on bearing, so every listed flight landed
+90°+ from the radar return for the same aircraft and opened its own track. An operator saw a friendly as
+two contacts, one with a plan and one without a radar return, and the deconfliction channel deconflicted
+nothing. The bots' only way to behave well was to ignore the track that named the friendly.
+
+Taking the *first* in-gate track rather than the nearest is nearest-neighbour association done wrong. The
+observation list is sorted by id, so in the urban swarm scenario — where a decoy and the friendly's plan
+return pass through one gate for a few seconds — whichever track sorted earlier absorbed the plan
+observation. A hostile decoy ended up carrying `flight_plan` as a source, so a competent bot read the
+hostile as an authorised flight and stood down. Ordering in the tracker list is not evidence of
+proximity.
+
+Ranking on bearing alone is deliberate: range is frequently unmeasured (the RF sensor reports none), so a
+distance metric that fell back to range would silently ignore whichever candidate had one. Bearing is
+always available, so the ranking is always the same comparison.
+
+**Consequence.** Both are now pinned by tests — `sensors.test.ts` table-drives the four quadrants from a
+known origin, `fusion.test.ts` asserts nearest-neighbour association and asserts that a ranged track does
+not win on range when it is the worse bearing match.
+
+---
+
+## D29 — Sensors see only entities that exist yet (M2, PRD §9.2)
+
+**Decision.** The session filters the entity list handed to the sensors on `t_ms >= spawn_t_ms`,
+alongside the `neutralised` and `landed` checks every sensor already did.
+
+**Why.** Each sensor only sees the list it is handed, and none of them check `spawn_t_ms` themselves — so
+with no filter upstream, a drone authored to arrive at t=260 s was detectable from t=0, sitting at its
+start position. That is not a scoring nuance: it gave the swarm scenario's neutral civilian a track from
+t=45 s, and a bot that correctly classified everything it could see was then punished for calling a
+long-dormant civilian a threat. The scenario said the civilian arrives late; the simulation had it on
+scope the whole time.
+
+**Consequence.** The swarm scenario's expert score went from 0 to 61 on this fix alone. Covered by two
+tests in `session.test.ts`: no track exists before the spawn time, and one does exist after it — the
+second because without it the first would also pass for a session whose sensors were simply dead.

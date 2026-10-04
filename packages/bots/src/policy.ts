@@ -27,6 +27,7 @@
  * reason it is banned in sim-core (CLAUDE.md).
  */
 
+import type { ClassificationCategory, Confidence } from "@skysentinel/shared";
 import type { BotTurn, TraineeView } from "@skysentinel/sim-core";
 
 /** A deterministic, replayable draw sequence for one bot. */
@@ -144,12 +145,22 @@ export const AUTHORITY_DISCIPLINE: Record<BotName, number> = {
   random: 0.3,
 };
 
-/** Probability a bot reports a track up the chain after classifying it. */
+/**
+ * Probability a bot reports a track up the chain after classifying it.
+ *
+ * `passive` is close behind `random` here, and deliberately so. Passive used to
+ * report at 0.15 against random's 0.3, which scored it below the pure-noise
+ * control — but that models an operator who notices contacts and then says nothing
+ * to anyone, which is not the failure this bot exists to represent. The real field
+ * failure is the one who sees everything, passes it up, and never escalates. A
+ * passive operator is *more* likely to report than a random one, because reporting
+ * is not the hard part; acting on it is.
+ */
 export const REPORT_DISCIPLINE: Record<BotName, number> = {
   expert: 0.9,
   novice: 0.55,
   trigger_happy: 0.4,
-  passive: 0.15,
+  passive: 0.35,
   random: 0.3,
 };
 
@@ -163,24 +174,62 @@ export const WARN_DISCIPLINE: Record<BotName, number> = {
 };
 
 /**
+ * Probability a bot reads the mission brief before working a contact.
+ *
+ * N4 and N9 both score briefing discipline, and it is one of the few rubrics a
+ * bot can earn without ever seeing a contact. `trigger_happy` is 0 by design:
+ * the profile is the operator who goes straight to the scope, which is precisely
+ * the habit being trained out. `passive` reads it — it is the bot that is careful
+ * and slow, not careless.
+ */
+export const BRIEF_DISCIPLINE: Record<BotName, number> = {
+  expert: 0.95,
+  novice: 0.6,
+  trigger_happy: 0,
+  passive: 0.8,
+  random: 0.2,
+};
+
+/**
  * How a bot picks a category from what it can see.
  *
  * The bots never read `correct_category` — that is the answer key. They reason
  * from the view exactly as a trainee would, which is what makes their scores
  * meaningful. `expert` reads the corroboration the track actually has; the weaker
  * bots guess, more often.
+ *
+ * ## Listed flights
+ *
+ * A track corroborated by the `flight_plan` sensor is a movement that is *on the
+ * plan* — a friendly or authorised flight that filed its route. That is visible in
+ * `sources`, which is truth-free, so treating it as evidence is exactly what a
+ * trainee would do with a deconfliction display.
+ *
+ * Getting this wrong is not a scoring nuisance. An earlier version called any
+ * two-source track hostile, which included listed flights — so `expert`, the bot
+ * meant to model a competent operator, was executing a response against friendly
+ * traffic and scoring itself a FRATRICIDE critical on a deconfliction scenario.
+ * A bot that models good practice cannot produce the failure the trainer needs a
+ * separate bot to produce.
  */
 export const categoryFor = (
   view: TraineeView,
   track_id: string,
   rng: BotRng,
   discipline: number,
-): { category: "unknown" | "suspicious" | "hostile"; confidence: "low" | "medium" | "high" } => {
+): { category: ClassificationCategory; confidence: Confidence } => {
   const track = view.tracks.find((t) => t.track_id === track_id);
   if (!track) return { category: "unknown", confidence: "low" };
 
   if (rng.chance(discipline)) {
     // Reasoned path: a corroborated, measured, confident track supports a call.
+    if (track.sources.includes("flight_plan")) {
+      // Listed and corroborated by something that can see it: positive
+      // identification of an authorised movement, not merely a filed route.
+      return track.sources.length >= 2
+        ? { category: "authorised", confidence: "high" }
+        : { category: "friendly", confidence: "medium" };
+    }
     const strong = track.sources.length >= 2 && track.confidence >= 0.5;
     if (strong) return { category: "hostile", confidence: "high" };
     if (track.confidence >= 0.3) return { category: "suspicious", confidence: "medium" };
@@ -193,6 +242,17 @@ export const categoryFor = (
     ? { category: "hostile", confidence: "high" }
     : { category: "unknown", confidence: "low" };
 };
+
+/**
+ * The categories that justify a warning or a response.
+ *
+ * A bot acts on what *it* concluded, not on what the scorer will later find was
+ * true. That is the only honest version of this loop: `execute_response` was
+ * ungated here before, so a bot that had classified a track `authorised` would
+ * still respond to it, which is not a deconflicted response to anything.
+ */
+export const isThreatCategory = (category: string | undefined): boolean =>
+  category === "hostile" || category === "suspicious";
 
 /** Tracks a bot has not yet classified, in stable id order. */
 export const unclassified = (view: TraineeView, done: ReadonlySet<string>): string[] =>

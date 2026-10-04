@@ -24,6 +24,9 @@ export {
   INJECT_TYPES,
   InjectTypeSchema,
   ScenarioInjectSchema,
+  BRIEF_SECTIONS,
+  BriefSectionSchema,
+  BriefSectionsSchema,
   ScenarioSchema,
   parseScenario,
 } from "./schema.js";
@@ -37,9 +40,11 @@ export type {
   ScenarioEntity,
   ScenarioAuthority,
   ExpectedBlock,
+  ExpectedTrack,
   ScenarioInject,
   InjectType,
   ScenarioFamily,
+  BriefSection,
   ParseResult,
 } from "./schema.js";
 
