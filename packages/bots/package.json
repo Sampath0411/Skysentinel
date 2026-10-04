@@ -15,7 +15,9 @@
     "build": "tsc -b",
     "typecheck": "tsc -b",
     "test": "vitest run --root .",
-    "dev": "echo stub-bots"
+    "dev": "echo stub-bots",
+    "sim:run": "node dist/cli.js",
+    "seed:demo": "echo stub-seed-demo"
   },
   "dependencies": {
     "@skysentinel/shared": "workspace:*",

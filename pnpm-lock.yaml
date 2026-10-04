@@ -89,6 +89,9 @@ importers:
       '@skysentinel/shared':
         specifier: workspace:*
         version: link:../shared
+      '@skysentinel/sim-core':
+        specifier: workspace:*
+        version: link:../sim-core
       zod:
         specifier: ^3.24.1
         version: 3.25.76
