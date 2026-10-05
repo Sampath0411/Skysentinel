@@ -252,6 +252,142 @@ describe("report", () => {
   });
 });
 
+describe("injects (FR-SIM-9)", () => {
+  /**
+   * The authored timeline and a live instructor inject share one implementation, so
+   * a scripted outage and a clicked outage degrade the same sensor by the same code.
+   * Each case asserts the *effect on the world*, not just that an event was logged —
+   * an inject that logged `inject_applied` and changed nothing would be a UI button
+   * that the AAR lies about.
+   */
+  it("applies an authored inject when its time arrives", () => {
+    const s = sessionWith(60_000, {
+      injects: [{ at_t_ms: 1_000, type: "comms_delay", params: { delay_s: 12 } }],
+    });
+
+    s.tick(); // t = 50 ms — before the inject is due.
+    expect(s.controls().report({ quantity: 1, activity: "early report" })).toBe(true);
+    expect(s.log().at(-1)!.payload["delay_ms"]).toBe(3000);
+
+    for (let i = 0; i < 20; i++) s.tick(); // past t = 1000 ms.
+    expect(s.log().filter((e) => e.type === "inject_applied")).toHaveLength(1);
+    expect(s.log().find((e) => e.type === "inject_applied")!.payload["by"]).toBe("scenario");
+
+    s.controls().report({ quantity: 1, activity: "late report" });
+    expect(s.log().at(-1)!.payload["delay_ms"]).toBe(12_000);
+  });
+
+  it("fires a runtime inject immediately and records who fired it", () => {
+    const s = sessionWith(0);
+
+    expect(s.inject("weather_change", { weather: "fog" }, "usr_instructor")).toBe(true);
+
+    const event = s.log().find((e) => e.type === "inject_applied")!;
+    expect(event.payload).toMatchObject({
+      inject_type: "weather_change",
+      params: { weather: "fog" },
+      by: "usr_instructor",
+    });
+    expect(s.world.environment.weather).toBe("fog");
+  });
+
+  it("logs an unusable inject but has no effect on the world", () => {
+    // Table-driven over the failure shapes: a type the sim does not know, a value
+    // of the wrong shape, and a value that is not in the vocabulary.
+    const cases: [string, Record<string, unknown>][] = [
+      ["not_an_inject", {}],
+      ["sensor_outage", { sensor: "lidar" }],
+      ["sensor_outage", { sensor: 3 }],
+      ["weather_change", { weather: "monsoon" }],
+      ["comms_delay", { delay_s: -1 }],
+      ["authority_change", { posture: "WEAPONS_FREE" }],
+      ["new_track", { range_m: 500 }],
+    ];
+
+    for (const [type, params] of cases) {
+      const s = sessionWith(0);
+      const before = s.log().length;
+      expect(s.inject(type, params, "usr_instructor"), `${type} ${JSON.stringify(params)}`).toBe(false);
+
+      // The inject is still in the log: it happened, and the AAR should say so.
+      const applied = s.log().slice(before).find((e) => e.type === "inject_applied");
+      expect(applied, `${type} logged nothing`).toBeDefined();
+      expect(applied!.payload["inject_type"]).toBe(type);
+    }
+  });
+
+  it("kills a sensor on a sensor_outage inject", () => {
+    const s = sessionWith(0);
+    // The suite starts whole; the trainee's own picture is what the outage costs.
+    expect(s.traineeView().tracks.length).toBe(0);
+
+    expect(s.inject("sensor_outage", { sensor: "radar" }, "usr_instructor")).toBe(true);
+
+    expect(s.log().find((e) => e.type === "sensor_state_changed")!.payload).toMatchObject({
+      sensor: "radar",
+      mode: "failed",
+    });
+    // The sensor stops contributing on the very next observation.
+    advanceUntil(s, () => s.traineeView().tracks.length > 0);
+    expect(s.cues().some((c) => c.sensor === "radar")).toBe(false);
+  });
+
+  it("re-resolves the environment factors on a weather_change inject", () => {
+    const s = sessionWith(0);
+    const clear = s.world.environment.factors;
+
+    expect(s.inject("weather_change", { weather: "fog" }, "usr_instructor")).toBe(true);
+
+    const fog = s.world.environment.factors;
+    expect(fog.vis).toBeLessThan(clear.vis);
+    expect(fog.ir_pen).toBeLessThan(clear.ir_pen);
+    // Time-of-day factors are untouched: the inject is the atmosphere, not the clock.
+    expect(fog.light).toBe(clear.light);
+    expect(fog.ir_boost).toBe(clear.ir_boost);
+  });
+
+  it("changes the delay on a comms_delay inject, for reports sent after it", () => {
+    const s = sessionWith(0);
+    expect(s.inject("comms_delay", { delay_s: 20 }, "usr_instructor")).toBe(true);
+
+    s.controls().report({ quantity: 1, activity: "after the inject" });
+    expect(s.log().at(-1)!.payload["delay_ms"]).toBe(20_000);
+  });
+
+  it("flips posture on an authority_change inject, visible in the trainee view", () => {
+    const s = sessionWith(0);
+    expect(s.traineeView().authority.posture).toBe("TIGHT");
+
+    expect(s.inject("authority_change", { posture: "FREE" }, "usr_instructor")).toBe(true);
+
+    expect(s.authority().posture).toBe("FREE");
+    expect(s.traineeView().authority.posture).toBe("FREE");
+  });
+
+  it("spawns a loitering contact on a new_track inject, placed from the observer's bearing and range", () => {
+    const s = sessionWith(0);
+    expect(s.world.entities().filter((e) => e.kind === "drone")).toHaveLength(1);
+
+    expect(s.inject("new_track", { bearing_deg: 0, range_m: 700, altitude_m: 90 }, "usr_instructor")).toBe(true);
+
+    const drones = s.world.entities().filter((e) => e.kind === "drone");
+    expect(drones).toHaveLength(2);
+    const injected = drones.find((d) => d.id.startsWith("INJ-"))!;
+    expect(injected).toBeDefined();
+    // Bearing 0° is north on the ENU plane, so the contact is 700 m north of the
+    // observer — the same geometry the trainee's own plot uses.
+    expect(injected.pos.x).toBeCloseTo(0, 0);
+    expect(injected.pos.y).toBeCloseTo(700, 0);
+    expect(injected.spawn_t_ms).toBe(s.t_ms());
+
+    // It is a real contact the sensors can see, not a logged marker.
+    const cuesBefore = s.cues().length;
+    expect(advanceUntil(s, () => s.cues().length > cuesBefore)).toBeGreaterThanOrEqual(0);
+    expect(s.cues().filter((c) => c.truth_ref.startsWith("INJ-"))).not.toHaveLength(0);
+    expect(s.traineeView().tracks.length).toBeGreaterThan(0);
+  });
+});
+
 describe("determinism (CLAUDE.md, FR-SIM-10)", () => {
   it("produces an identical log for the same scenario, seed and inputs", () => {
     const drive = (): string => {

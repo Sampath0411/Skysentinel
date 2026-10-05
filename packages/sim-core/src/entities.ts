@@ -14,12 +14,13 @@ import {
   type Affiliation,
   type Archetype,
   type BehaviourState,
+  type EntityKind,
   type Millis,
   type Vec3,
   type SwarmRole,
 } from "@skysentinel/shared";
 
-export type EntityKind = "drone" | "bird" | "protected_asset" | "friendly_position";
+export type { EntityKind } from "@skysentinel/shared";
 
 /** One step of a scripted or generated behaviour programme. */
 export interface BehaviourStep {

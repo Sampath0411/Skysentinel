@@ -120,6 +120,15 @@ export interface AuthorityState {
   queue(request: PendingRequest): void;
   /** Resolve anything due at `t_ms`, returning the requests that settled. */
   settle(t_ms: Millis, rule: GrantRule): readonly { request: PendingRequest; decision: AuthorityDecision }[];
+  /**
+   * Replace the posture mid-run (FR-SIM-9 `authority_change`).
+   *
+   * The trainee's view of posture is read off this state, so a change is visible on
+   * the next view. Grants already made are kept: authority earned under a looser
+   * posture is not retrospectively withdrawn, which keeps the *transition* — not the
+   * revocation — as the lesson.
+   */
+  setPosture(posture: Posture): void;
 }
 
 export interface AuthorityOptions {
@@ -132,9 +141,12 @@ export interface AuthorityOptions {
 export const createAuthority = (options: AuthorityOptions): AuthorityState => {
   const granted = new Map<string, Millis>();
   const pending: PendingRequest[] = [];
+  let posture: Posture = options.posture;
 
   return {
-    posture: options.posture,
+    get posture() {
+      return posture;
+    },
     granted,
     pending: () => pending,
 
@@ -166,6 +178,10 @@ export const createAuthority = (options: AuthorityOptions): AuthorityState => {
         settled.push({ request, decision });
       }
       return settled;
+    },
+
+    setPosture(next) {
+      posture = next;
     },
   };
 };

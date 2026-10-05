@@ -12,6 +12,8 @@
 
 import {
   SYNTHETIC_BANNER,
+  type Affiliation,
+  type Archetype,
   type Millis,
   type Vec3,
 } from "@skysentinel/shared";
@@ -52,6 +54,26 @@ export interface DrillRequest {
   signature_reduction: number;
 }
 
+/**
+ * What a runtime `new_track` inject has to say about the contact it adds.
+ *
+ * Everything is optional except the position, because an instructor injecting a
+ * track is improvising — the console asks only for "where", and the world supplies
+ * a plausible airframe and a loiter so the contact stays on scope long enough to be
+ * worked. Truth fields are set from what the instructor picks; they never reach a
+ * trainee view (see `toTraineeView`).
+ */
+export interface SpawnDroneParams {
+  pos: Vec3;
+  archetype?: Archetype;
+  affiliation_truth?: Affiliation;
+  intent?: string;
+  /** Loiter radius around the spawn point, m. */
+  radius_m?: number;
+  speed_mps?: number;
+  rf_emitting?: boolean;
+}
+
 export interface World {
   readonly scenario_id: string;
   readonly seed: number;
@@ -66,6 +88,22 @@ export interface World {
   run(): number;
   /** Run one tick. Returns false once the clock has expired. */
   tick(): boolean;
+  /**
+   * Replace the environment mid-run (FR-SIM-9 `weather_change`).
+   *
+   * Sensors read `environment.factors` on every observation, so the next tick
+   * already sees the new weather. Takes the whole object rather than a weather
+   * string because `Environment` is the world's own type to own.
+   */
+  setEnvironment(environment: Environment): void;
+  /**
+   * Add a drone to the world right now (FR-SIM-9 `new_track`).
+   *
+   * Returns the drone so the caller can reference its id. The spawn is
+   * deterministic given the parameters — no draw is taken — because an inject
+   * fired by an instructor is an external input, not part of the seeded baseline.
+   */
+  spawnDrone(params: SpawnDroneParams): Drone;
   requestDrill(req: DrillRequest): DrillState;
   drills(): readonly DrillState[];
   outcome(): ReturnType<typeof deriveOutcome>;
@@ -80,6 +118,7 @@ export const createWorld = (params: WorldParams): World => {
   const emitter = createEventEmitter({ seedActor: "sim" });
   const clock = createClock(params.duration_ms);
   const terrain = params.terrain;
+  let environment = params.environment;
 
   const assets = params.assets;
   const friendly = (params.friendly_positions ?? []).map((f, i) =>
@@ -99,6 +138,9 @@ export const createWorld = (params: WorldParams): World => {
 
   const drills = new Map<string, DrillState>();
   let impacts = 0;
+  // `spawned_seq` continues past the authored set so a runtime spawn cannot collide
+  // with an entity the scenario already numbered.
+  let nextSpawnSeq = drones.length + assets.length + friendly.length;
 
   emitter.emit("session_started", { scenario_id: params.scenario_id, seed: params.seed });
 
@@ -135,7 +177,9 @@ export const createWorld = (params: WorldParams): World => {
     scenario_id: params.scenario_id,
     seed: params.seed,
     terrain,
-    environment: params.environment,
+    get environment() {
+      return environment;
+    },
     emitter,
     rng,
 
@@ -229,6 +273,43 @@ export const createWorld = (params: WorldParams): World => {
       drills.set(req.asset_id, drill);
       emitter.emit("action_taken", { action: "activate_protective_drill", params: { asset_id: req.asset_id } });
       return drill;
+    },
+
+    setEnvironment(next) {
+      environment = next;
+    },
+
+    spawnDrone(p) {
+      const drone = createDrone({
+        id: `INJ-${nextSpawnSeq + 1}`,
+        archetype: p.archetype ?? "recon_multirotor",
+        // An instructor who did not say which side this is gets an unattributed
+        // contact, not a free hostile: the assumption is the trainee's to make.
+        affiliation_truth: p.affiliation_truth ?? "non_uas",
+        intent: p.intent ?? "injected_loiter",
+        pos: p.pos,
+        spawn_t_ms: emitter.now(),
+        speed_mps: p.speed_mps ?? 10,
+        // A long loiter keeps the injected contact on scope instead of crossing it
+        // once and leaving — the point of the inject is something to work.
+        programme: [
+          { state: "orbit_loiter", center: { ...p.pos }, radius: p.radius_m ?? 120, duration_s: 86_400 },
+        ],
+        rf_emitting: p.rf_emitting ?? true,
+        spawned_seq: nextSpawnSeq++,
+      });
+      drones.push(drone);
+      byId.set(drone.id, drone);
+      startStep(drone, emitter.now());
+      // Truth fields included: this event is instructor-visible only, and the truth
+      // map is what the instructor console is for (PRD §13.2).
+      emitter.emit("entity_spawned", {
+        id: drone.id,
+        archetype: drone.archetype,
+        affiliation_truth: drone.affiliation_truth,
+        intent: drone.intent,
+      });
+      return drone;
     },
 
     drills: () => [...drills.values()],

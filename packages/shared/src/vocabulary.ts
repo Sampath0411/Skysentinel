@@ -164,6 +164,16 @@ export const ROLES = ["trainee", "instructor", "admin", "system"] as const;
 export const RoleSchema = z.enum(ROLES);
 export type Role = z.infer<typeof RoleSchema>;
 
+/** Entity kinds (PRD §5.1 FR-SIM-4). */
+export const ENTITY_KINDS = [
+  "drone",
+  "bird",
+  "protected_asset",
+  "friendly_position",
+] as const;
+export const EntityKindSchema = z.enum(ENTITY_KINDS);
+export type EntityKind = z.infer<typeof EntityKindSchema>;
+
 /**
  * Visibility of an event. `instructor`-only payloads carry ground truth and must
  * be filtered server-side before reaching a trainee client.

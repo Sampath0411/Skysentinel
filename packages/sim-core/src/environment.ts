@@ -71,6 +71,24 @@ export const createEnvironment = (
   return { time_of_day, weather, wind_mps, factors };
 };
 
+/**
+ * Change the weather, re-resolving the factors that depend on it.
+ *
+ * Sensors read `factors` per tick, so a live change takes effect on the next
+ * observation rather than being baked in at construction. Returns a new
+ * environment; the world installs it (see `World.setEnvironment`), so nothing
+ * else holds a stale reference.
+ *
+ * Time of day is deliberately not taken here: an inject that moved the clock would
+ * be a second axis of degradation, and FR-SIM-9's weather inject is about the
+ * atmosphere, not the daylight cycle.
+ */
+export const setWeather = (env: Environment, weather: Weather): Environment => ({
+  ...env,
+  weather,
+  factors: { ...env.factors, vis: VIS[weather], ir_pen: IR_PEN[weather] },
+});
+
 /** Is it dark enough that visual detection is materially degraded? */
 export const isLowLight = (env: Environment): boolean => env.factors.light <= 0.45;
 

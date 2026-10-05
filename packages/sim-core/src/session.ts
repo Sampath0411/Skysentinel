@@ -34,6 +34,8 @@
 
 import type { AnySimEvent, Millis, ReportFields } from "@skysentinel/shared";
 import type {
+  Affiliation,
+  Archetype,
   ClassificationCategory,
   Confidence,
   Posture,
@@ -41,7 +43,9 @@ import type {
   SensorId,
   SensorMode,
   Vec3,
+  Weather,
 } from "@skysentinel/shared";
+import { POSTURES, WEATHER } from "@skysentinel/shared";
 
 import {
   createAuthority,
@@ -50,7 +54,7 @@ import {
   type GrantRule,
 } from "./authority.js";
 import { type Drone, type ProtectedAsset } from "./entities.js";
-import type { Environment } from "./environment.js";
+import { setWeather, type Environment } from "./environment.js";
 import {
   type FusedTrack,
   type Track,
@@ -200,6 +204,18 @@ export interface Session {
   tick(): boolean;
   /** Run to completion with a policy driving. Returns the tick count. */
   run(policy: BotPolicy): number;
+  /**
+   * Fire one inject right now (FR-SIM-9).
+   *
+   * `by` names whoever applied it — `"scenario"` for an authored timeline, an
+   * instructor id for a live one — and lands in the `inject_applied` payload so the
+   * AAR can tell a scripted degradation from a human one.
+   *
+   * Returns false when the type or its parameters were not usable. See
+   * `applyInject`: the event is still logged, so the inject is visible in the AAR
+   * even when it had no effect on the world.
+   */
+  inject(type: string, params: Record<string, unknown>, by: string): boolean;
   /** The truth-free view. Safe to send to a trainee client (PRD §4). */
   traineeView(): TraineeView;
   /**
@@ -417,18 +433,91 @@ export const createSession = (params: SessionParams): Session => {
     }
   };
 
+  /**
+   * Apply one inject (FR-SIM-9), whatever its source.
+   *
+   * The authored timeline and an instructor clicking a button both land here, so a
+   * scripted sensor outage and a fired one degrade the same sensor by the same code
+   * and the log records both identically. A second implementation would be a second
+   * set of rules this project cannot afford.
+   *
+   * Returns false when the type or its parameters were unusable. The `inject_applied`
+   * event is emitted regardless, because the inject *did* happen and the AAR should
+   * show it; the boolean lets a caller distinguish "applied" from "logged, no effect"
+   * without parsing the log.
+   */
+  const applyInject = (type: string, params: Record<string, unknown>, by: string): boolean => {
+    emitter.emit("inject_applied", { inject_type: type, params, by });
+
+    switch (type) {
+      case "sensor_outage": {
+        const id = params["sensor"];
+        if (typeof id !== "string") return false;
+        const sensor = sensors.find((s) => s.id === id);
+        if (!sensor) return false;
+        setSensorMode(sensor, "failed");
+        emitter.emit("sensor_state_changed", { sensor: sensor.id, mode: "failed" });
+        return true;
+      }
+
+      case "weather_change": {
+        const weather = params["weather"];
+        if (typeof weather !== "string" || !WEATHER.includes(weather as Weather)) return false;
+        // Sensors read `factors` on every observation, so the next tick already sees
+        // the new atmosphere.
+        world.setEnvironment(setWeather(world.environment, weather as Weather));
+        return true;
+      }
+
+      case "comms_delay": {
+        // Mutating the spec is enough: `report` reads `spec.comms_delay_s` when it
+        // builds the payload, so a report sent after this inject carries the new lag.
+        const delay_s = params["delay_s"];
+        if (typeof delay_s !== "number" || !Number.isFinite(delay_s) || delay_s < 0) return false;
+        spec.comms_delay_s = delay_s;
+        return true;
+      }
+
+      case "authority_change": {
+        const posture = params["posture"];
+        if (typeof posture !== "string" || !POSTURES.includes(posture as Posture)) return false;
+        authority.setPosture(posture as Posture);
+        return true;
+      }
+
+      case "new_track": {
+        // Placed from the observer's own picture — a bearing and a range is what an
+        // instructor reads off a scope, and an absolute xy would require a second
+        // map to enter.
+        const bearing = params["bearing_deg"];
+        const range = params["range_m"];
+        if (typeof bearing !== "number" || typeof range !== "number") return false;
+        const pos = positionAtBearingRange(
+          spec.observer_pos,
+          bearing,
+          range,
+          typeof params["altitude_m"] === "number" ? params["altitude_m"] : 120,
+        );
+        world.spawnDrone({
+          pos,
+          ...(typeof params["archetype"] === "string" ? { archetype: params["archetype"] as Archetype } : {}),
+          ...(typeof params["affiliation"] === "string"
+            ? { affiliation_truth: params["affiliation"] as Affiliation }
+            : {}),
+          ...(typeof params["speed_mps"] === "number" ? { speed_mps: params["speed_mps"] } : {}),
+        });
+        return true;
+      }
+
+      default:
+        return false;
+    }
+  };
+
   const applyInjects = (t_ms: Millis): void => {
     for (const inject of spec.injects) {
       if (inject.at_t_ms !== t_ms) continue;
-      emitter.emit("inject_applied", { inject_type: inject.type, params: inject.params, by: "scenario" });
-
-      if (inject.type !== "sensor_outage") continue;
-      const id = inject.params["sensor"];
-      if (typeof id !== "string") continue;
-      const sensor = sensors.find((s) => s.id === id);
-      if (!sensor) continue;
-      setSensorMode(sensor, "failed");
-      emitter.emit("sensor_state_changed", { sensor: sensor.id, mode: "failed" });
+      applyInject(inject.type, inject.params, "scenario");
     }
   };
 
@@ -614,6 +703,7 @@ export const createSession = (params: SessionParams): Session => {
       }
       return ticks;
     },
+    inject: (type, params, by) => applyInject(type, params, by),
     traineeView: view,
     controls: () => controls,
     tracks: () => tracker.tracks(),
@@ -635,6 +725,23 @@ export const createSession = (params: SessionParams): Session => {
 };
 
 /**
+ * Position at a given bearing and range from `from`, on the local ENU plane.
+ *
+ * The same geometry the track projection uses, so a contact an instructor injects
+ * at "045°, 4 km" lands where the trainee's own plot would put a contact at that
+ * bearing and range — the two ways of naming a position agree by construction.
+ */
+const positionAtBearingRange = (
+  from: Vec3,
+  bearing_deg: number,
+  range_m: number,
+  alt_m: number,
+): Vec3 => {
+  const rad = (bearing_deg * Math.PI) / 180;
+  return { x: from.x + range_m * Math.sin(rad), y: from.y + range_m * Math.cos(rad), z: alt_m };
+};
+
+/**
  * Estimated position from a track's own measurements.
  *
  * Purely geometric: bearing and measured range from the observer, with altitude
@@ -643,7 +750,6 @@ export const createSession = (params: SessionParams): Session => {
  * that published truth would make every classification trivially correct.
  */
 const positionEstimate = (t: Track, from: Vec3): [number, number, number] => {
-  const r = t.range_m ?? 0;
-  const rad = (t.bearing_deg * Math.PI) / 180;
-  return [from.x + r * Math.sin(rad), from.y + r * Math.cos(rad), from.z];
+  const p = positionAtBearingRange(from, t.bearing_deg, t.range_m ?? 0, from.z);
+  return [p.x, p.y, p.z];
 };
