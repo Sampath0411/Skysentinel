@@ -9,6 +9,12 @@ coverage/
 *.sqlite-journal
 *.sqlite-wal
 *.sqlite-shm
+# The dev server's default DB is `*.db` (and its -wal/-shm sidecars). Only a
+# throwaway local smoke database, but it must never reach a commit.
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
 apps/server/.data/
 
 # packaging output
@@ -21,6 +27,20 @@ exports/
 
 # scratch space for run output during development and matrix testing
 .tmp/
+
+# throwaway captures from manual API smoke checks (tokens, JSON dumps, screenshots)
+token.txt
+ttoken.txt
+login.json
+login.png
+session.json
+view.json
+tview.json
+events.json
+end.json
+score.json
+.playwright-mcp/
+packages/bots/diag2.mjs
 
 # editor / OS
 .DS_Store

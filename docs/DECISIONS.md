@@ -470,3 +470,187 @@ scope the whole time.
 **Consequence.** The swarm scenario's expert score went from 0 to 61 on this fix alone. Covered by two
 tests in `session.test.ts`: no track exists before the spawn time, and one does exist after it — the
 second because without it the first would also pass for a session whose sensors were simply dead.
+
+---
+
+## D30 — Instructor injects share one code path with authored injects (M5, PRD §13.2 / §15, FR-SIM-9)
+
+**Decision.** `Session.applyInject(type, params, by)` is the single entry point: the runtime
+`POST /api/sessions/:id/inject` route calls it, and the authored-scenario path (`spec.injects`) calls the
+same function instead of its own loop. Every inject emits `inject_applied` at `instructor` visibility.
+
+**Why.** The inject menu is the largest feature gap the audit found, and the failure mode that made it
+worth doing properly is drift: a second implementation of "what a weather change does" would eventually
+disagree with the one the scenario files use, and a scripted and an injected rain squall on the same
+scenario would produce different sensor factors. One function cannot drift from itself.
+
+**Consequence.** Four of the five `INJECT_TYPES` mutate real sim state and are asserted in
+`session.test.ts` (sensor `failed`, environment factors re-resolved, `comms_delay_s`, authority posture);
+`new_track` needs a world spawn surface that does not exist yet and is out of scope for this pass. The
+server test asserts only the boundary — applied vs. refused — and refuses before mutating when the
+session is in assessment mode, which is the §13.2 rule made testable.
+
+---
+
+## D31 — The mandated-three AAR card is computed in scoring, not in the client (M5, PRD §12.2)
+
+**Decision.** `ScoreResult.mandated` carries the detection time / classification accuracy / response
+decision summary, derived in `packages/scoring/src/mandated.ts` from `RunFacts` and the score tree. The
+AAR card renders it.
+
+**Why.** The three numbers the PRD asks for come from correlation against truth — `par_detect_s`, the
+*final* declaration per track, the defensible-category set — and `RunFacts` never leaves the server.
+Deriving them in the client would mean either parsing node reason strings (fragile: the wording is
+display copy, not an API) or shipping truth to the browser, which the knowability boundary forbids. The
+choice that keeps the boundary is to compute where the facts live.
+
+**Consequence.** The card cannot disagree with the score explanation beside it, because it is built from
+the same nodes; `mandated.test.ts` asserts that `response` equals the N7 node counts rather than
+re-deriving them. Detection grades mirror `scoreDetection`'s bands exactly, and one test asserts the two
+agree so a future band change has to touch both.
+
+---
+
+## D32 — Timeline colour is the score verdict, and uncited events keep their type colour (M5, PRD §12.2)
+
+**Decision.** The AAR timeline takes a `seq → pass | fail` map off the score tree and uses it to colour
+markers; a seq the tree never cites keeps the colour its event type always had. The `Legend` component
+that nothing imported now keys the strip.
+
+**Why.** §12.2 says "colour = verdict", and the strip sits beside the per-node explanation — so a
+marker coloured by event type would read as a disagreement with the score. But a sensor update or a cue
+has no verdict; colouring it pass/fail would invent a judgement the score did not make. Only scored
+nodes (`max_points > 0`) contribute, and fail wins over pass where a seq is cited twice.
+
+**Consequence.** A new event type renders with no verdict until something scores it, which is the
+correct default rather than a gap to fill. Pinned in `Timeline.test.tsx`.
+
+---
+
+## D33 — Client tests cover the pure view models first (M5, CLAUDE.md "add a test with every behaviour")
+
+**Decision.** `apps/client` gained Vitest + React Testing Library with `fileParallelism: false` (a
+browser env is heavier than node, and these are unit-shaped tests). The first suites are `format.ts`,
+`types.ts` and `api.ts`, then the components the UI work touched; both apps are now in
+`vitest.workspace.ts` so the root `pnpm test` covers them.
+
+**Why.** The client had zero tests and no runner, and the pure helpers are where a regression is most
+likely to ship unnoticed — a clock that rounds the wrong way is a wrong number on a screen a trainee
+times a decision against. That is not hypothetical: writing the first suite found two real defects.
+
+**Consequence.** `fmtClockTenths` rounded `toFixed(1)` on the seconds and rendered 59.96 s as
+`00:60.0`; it now floors integer tenths. And `eventClass` had a dead branch — the
+`response_effect_resolved → critical` exact match sat below the broader
+`includes("response_effect") → authority` check, so the outcome of a kinetic response coloured as a
+permission row. Both are pinned with boundary tests.
+
+---
+
+## D34 — A non-attacking programme must not enter an asset's impact radius (M3, PRD §8.4 rule 6)
+
+**Decision.** Rule 6 gained `non_attacker_in_impact_radius`. It flies an entity's programme as the
+behaviour engine does — each step measured from where the previous one left it — and reports the closest
+approach of that occupied region to every asset, unless the programme contains an approach state
+(`approach_direct`, `terrain_masked_approach`, `land`).
+
+**Why.** The sim's impact rule is unconditional: any airborne entity inside an asset's `impact_radius_m`
+damages it and is neutralised (`world.ts`), measured horizontally, regardless of intent or altitude. Two
+of the three shipped scenarios authored against that rule without knowing it — a reconnaissance orbit
+that passed 8 m *inside* the fuel point it was watching, and five "harmless" decoys whose hovers were
+centred on the substation they were meant to draw fire from. The decoys destroyed it themselves at
+t=46.9 s, before the main group arrived; the orbit ended the only track in the scenario 15 s after it
+appeared. From the trainee's seat the simulation looked broken, and the AAR then reported a mission
+outcome the author had not written.
+
+**Consequence.** `scr-night-recon-01` now transits to its orbit and holds it 25 m clear of the fuel
+point; `scr-urban-swarm-diversion-01` holds its decoys on the NE perimeter and routes the civil crossing
+33 m clear of the operations centre. `closestApproachTo` treats an orbit or hover as the disc the
+behaviour engine snaps onto, not the centre — a 90 m orbit around a point 60 m from an asset still
+flies through it. Attackers are exempt because entering the radius is the whole point of an approach;
+`scr-friendly-deconflict-01`'s intended impact on A1 still fires. Golden bot scores for the two edited
+scenarios move with the geometry.
+
+---
+
+## D35 — Integration tests retire the session they opened (M5, CLAUDE.md "run tests before every commit")
+
+**Decision.** `ws.test.ts` and `sessions.test.ts` both record the sessions `startSession` opens, and an
+`afterEach` posts `/end` for all of them.
+
+**Why.** Every test in those files starts a live session at `speed: 6000`/`8000` and nothing stopped it, so
+each one left a sim stepping a 420 s scenario as fast as the CPU would allow for the rest of the file. The
+tests that assert on wall clock were the ones that broke, and they broke *deterministically* — run alone,
+with nothing else on the machine, two of the three still failed. Instrumenting the socket showed the server
+behaving correctly throughout: `unauthenticated` frame at +99 ms, close at +442 ms. The budget was being
+consumed by load the earlier tests had left running, not by a defect in the code under test.
+
+**Consequence.** The two socket rejection tests finish in 659 ms and 939 ms instead of racing a 2 s budget
+they used to miss, the completion test stops timing out at 30 s, the server suite drops from 271 s to 154 s,
+and neither file is order-dependent: a test that runs slowly can no longer starve the next one. The
+wall-clock budgets in `vitest.config.ts` stay, because these are integration tests driving real timer
+loops and a busy machine is a genuine failure mode — the fix is to stop paying for work no test needs.
+
+---
+
+## D36 — A bodyless POST must not claim a JSON content-type (M5, PRD §15)
+
+**Decision.** `api()` sets `Content-Type: application/json` only when `init.body` is defined.
+
+**Why.** Fastify's parser rejects an empty body outright when the content-type says JSON
+(`FST_ERR_CTP_EMPTY_JSON_BODY`, HTTP 400). The client's `startSession`, `pauseSession` and `resumeSession`
+send no body, so all three returned 400 and **the simulation could not be started from the UI at all** — the
+console rendered a live-looking session that never moved past t=0. The failure was invisible to the server
+suite because those tests call the route through Fastify's own injector, which sets no content-type on a
+bodyless request; only a real `fetch` from the browser sent the header.
+
+**Consequence.** Start, pause and resume work from the UI, and the launch path starts the session it
+creates. Two tests pin it: `api.test.ts` asserts the header is absent without a body and present with one,
+and `Home.test.tsx` asserts `create` then `start` happen in that order — the second test exists because
+launching previously created a session and navigated without starting it.
+
+---
+
+## D37 — A stored token is validated before the app is shown (M5, PRD §17)
+
+**Decision.** `AuthProvider` calls `/me` once at mount when a token is stored, and shows neither the app nor
+the login form until it answers. A rejected or unreachable check clears the token and the stored user.
+
+**Why.** Tokens are signed with a per-boot secret, so restarting the local server invalidates whatever the
+browser holds — the intended behaviour, and `auth.tsx` said so in its own header comment. But nothing ever
+checked. The app booted straight into "signed in" from `localStorage` and every request 401'd: the header
+showed `admin` over a dead token, scenario lists stayed on "Loading…", and the only escape was clearing site
+data by hand. The comment described a recovery path that was never wired up.
+
+**Consequence.** A restarted server drops the user on the login form instead of a broken console, and a
+genuinely signed-in user does not watch the app flash past the login prompt. `auth.test.tsx` covers the valid
+token, the rejected token, the no-flash property and the empty-storage case.
+
+---
+
+## D38 — The 20 Hz sim drives the record; the render rate is decoupled (PRD §18 "Performance on weak laptops")
+
+**Decision.** The server still steps at 20 Hz and still pushes one frame per tick. Nothing about the
+simulation changed. The client buffers the last two frames and interpolates between them on each animation
+frame, so the canvases redraw at the display's own refresh rate. Implemented in `apps/client/src/interpolate.ts`
+(the pure maths), `useSmoothTracks.ts` (the React-facing buffer, handing the draw loops a stable reader rather
+than state — putting a 60 Hz React render on five panels to move a few pixels is the opposite of a performance
+win) and `EoScene.tsx` / `RadarCanvas.tsx` / `CopMap.tsx` / `TruthMap.tsx` (the draw loops).
+
+**Why.** PRD §18 asks for "fixed 20 Hz sim decoupled from render" and §13.1 asks for smooth continuous
+movement. The sim was already right; the *render* was coupled to it, which is what the §18 clause is there to
+prevent. Every canvas drew the last frame's positions, so a 60 Hz monitor showed the same contact in the same
+pixel for two frames out of three and teleported it on the third. `EoScene` compounded it: it cleared its blip
+group and rebuilt every marker mesh, geometry and material, twenty times a second, and put each new marker at
+the new position rather than moving the old one there.
+
+**Two properties are deliberate and tested.** *Nothing is extrapolated* — every drawn position lies between two
+positions the sim actually reported, so the client never invents a track location (CLAUDE.md: the server owns
+the truth; the client is a view). And *the lag is one frame interval, 50 ms*, which is under the ~100 ms at
+which added latency reads as sluggish; `MAX_LEAD_MS` caps how far the render clock may run past the newest
+frame so a backgrounded tab or a dropped socket snaps forward instead of crawling.
+
+**Consequence.** Contacts glide at 60 Hz while the event log keeps its 20 Hz resolution — the assessment record
+is unaffected, and `pnpm sim:run` still produces a byte-identical log for the same scenario and seed. Cost is
+one frame of display latency and a bounded buffer per client. The EO scene's markers are now created once per
+track and restyled in place, which is cheaper than the rebuild it replaces. `interpolate.test.ts` (30 tests)
+pins the invariance that no alpha in 0…1 ever draws a position the sim did not report.
