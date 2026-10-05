@@ -4,3 +4,6 @@ packages:
 
 onlyBuiltDependencies:
   - esbuild
+  # better-sqlite3 is a native addon: without its install script there is no
+  # compiled binding and every query throws at require time.
+  - better-sqlite3

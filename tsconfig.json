@@ -8,6 +8,8 @@
     { "path": "packages/scoring" },
     { "path": "packages/adaptive" },
     { "path": "packages/ai-adapter" },
-    { "path": "packages/bots" }
+    { "path": "packages/bots" },
+    { "path": "apps/client" },
+    { "path": "apps/server" }
   ]
 }

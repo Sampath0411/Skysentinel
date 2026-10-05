@@ -3,7 +3,33 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "main": "dist/index.js",
   "scripts": {
-    "dev": "echo \"server: scaffolded in M5\""
+    "dev": "node --watch --experimental-strip-types src/main.ts",
+    "start": "node --experimental-strip-types src/main.ts",
+    "build": "tsc -b",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@fastify/static": "^8.3.0",
+    "@skysentinel/bots": "workspace:*",
+    "@skysentinel/scenario": "workspace:*",
+    "@skysentinel/scoring": "workspace:*",
+    "@skysentinel/shared": "workspace:*",
+    "@skysentinel/sim-core": "workspace:*",
+    "better-sqlite3": "^11.7.0",
+    "fastify": "^5.2.0",
+    "fastify-plugin": "^6.0.0",
+    "ws": "^8.18.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.10.2",
+    "@types/supertest": "^7.2.1",
+    "@types/ws": "^8.5.13",
+    "supertest": "^7.3.1",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
   }
 }
