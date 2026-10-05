@@ -15,7 +15,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { findForbiddenKeys, type AnySimEvent } from "@skysentinel/shared";
+import { filterForRole, findForbiddenKeys } from "@skysentinel/shared";
 import { SCRIPTED_SCENARIOS, scriptedScenarioById } from "@skysentinel/scenario";
 
 import { runScenario } from "./run.js";
@@ -101,10 +101,14 @@ describe("truth boundary (PRD §4, §6.4)", () => {
     // The bots are the strongest test of this: they drive the same view a socket
     // client would receive. If the view leaked truth, `findForbiddenKeys` on the
     // trainee-visible events would name it.
+    //
+    // That view is `filterForRole(..., "trainee")`, not a raw visibility filter:
+    // `sensor_observation` is trainee-visible but carries `truth_ref` internally,
+    // which scoring correlates on and the view strips (PRD §6.4, views.ts). A
+    // naive `visibility !== "instructor"` filter keeps it, and would then "prove"
+    // a leak in the exact boundary that is clean.
     const r = runScenario({ scenario: scriptedScenarioById("scr-urban-swarm-diversion-01")!, bot: "expert" });
-    const traineeVisible = r.events.filter(
-      (e: AnySimEvent) => e.visibility !== "instructor",
-    ) as AnySimEvent[];
+    const traineeVisible = filterForRole(r.events, "trainee");
     expect(findForbiddenKeys(traineeVisible)).toEqual([]);
   });
 
@@ -154,13 +158,25 @@ describe("trigger_happy — the designed failure case (M3 DoD)", () => {
     // operator requests nothing at all, so demanding it beat `trigger_happy` would
     // be demanding it act. The axis under test is "does it go through the process",
     // which only means something for a bot that responds at all.
-    const counts = BOT_NAMES.filter((b) => b !== "passive").map((bot) => [
-      bot,
-      runScenario({ scenario: scriptedScenarioById("scr-friendly-deconflict-01")!, bot })
-        .counts["authority_requested"] ?? 0,
-    ] as const);
+    //
+    // "Responds" is measured by what the run did, not by the bot's name. On
+    // `friendly-deconflict` a bot that never declares a threat has nothing to
+    // escalate, so `novice` and `random` can finish the scenario without once
+    // requesting authority. That is correct behaviour for those profiles, not a
+    // lapse — so the comparison set is the bots that actually took a response
+    // action, and against every one of those `trigger_happy` asks less.
+    const scenario = scriptedScenarioById("scr-friendly-deconflict-01")!;
+    const counts = BOT_NAMES.map((bot) => {
+      const r = runScenario({ scenario, bot });
+      const acted = r.events.some(
+        (e) => e.type === "action_taken" && e.payload.action === "execute_response",
+      );
+      return [bot, r.counts["authority_requested"] ?? 0, acted] as const;
+    });
     const triggerHappy = counts.find(([b]) => b === "trigger_happy")![1];
-    for (const [bot, n] of counts) {
+    const engaged = counts.filter(([, , acted]) => acted);
+    expect(engaged.length).toBeGreaterThan(1);
+    for (const [bot, n] of engaged) {
       if (bot === "trigger_happy") continue;
       expect(n).toBeGreaterThan(triggerHappy);
     }
