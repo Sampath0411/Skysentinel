@@ -262,9 +262,12 @@ describe("rule 6 — geometry", () => {
 
   it("accepts assets separated by more than their radii", () => {
     const s = draft();
-    s.assets[0]!.pos = [0, 0];
+    // The positions are picked clear of every entity's programme — put an asset on
+    // the logistics flight's corridor and the impact-radius rule fires instead,
+    // which says nothing about whether the two radii overlap.
+    s.assets[0]!.pos = [-300, 200];
     s.assets[0]!.impact_radius_m = 15;
-    s.assets[1]!.pos = [400, 0];
+    s.assets[1]!.pos = [300, 300];
     expect(codes(rule6_geometryValid(s))).toEqual([]);
   });
 
@@ -273,6 +276,62 @@ describe("rule 6 — geometry", () => {
     hills.environment = { ...hills.environment, terrain: "rural" };
     hills.entities[0]!.pos = [0, 0, -50]; // below ground
     expect(rule6_geometryValid(hills).some((i) => i.code === "spawn_inside_obstacle")).toBe(true);
+  });
+
+  it("rejects a non-attacker that overflies an asset's impact radius", () => {
+    // A bird crossing the fuel point would be struck by the impact rule and
+    // neutralised — the sim destroys the asset for the trainee.
+    const s = draft();
+    const birds = s.entities.find((e) => e.id === "B1")!;
+    birds.pos = [400, -80, 90];
+    birds.behaviour = [{ state: "transit", to: [-400, -80, 90], speed: 10 }];
+    expect(codes(rule6_geometryValid(s))).toContain("non_attacker_in_impact_radius");
+  });
+
+  it("rejects a reconnaissance whose orbit clips the asset", () => {
+    // The behaviour engine snaps an entity onto its orbit circle on the first
+    // loiter tick, so a centre clear of the asset with too wide a radius still
+    // flies through it. Measuring the centre alone would miss this.
+    const s = draft();
+    const d1 = s.entities.find((e) => e.id === "D1")!;
+    d1.behaviour = [
+      { state: "transit", to: [180, -80, 45], speed: 9 },
+      { state: "orbit_loiter", center: [180, -80, 45], radius: 90, speed: 9, duration_s: 120 },
+    ];
+    expect(codes(rule6_geometryValid(s))).toContain("non_attacker_in_impact_radius");
+  });
+
+  it("exempts an attacker whose programme is meant to close on the asset", () => {
+    // Entering the radius is the point of an approach; a rule that forbade it
+    // would reject every honest attack scenario in the set.
+    const s = draft();
+    const d1 = s.entities.find((e) => e.id === "D1")!;
+    d1.intent = "attack";
+    d1.behaviour = [{ state: "approach_direct", to: [120, -80, 40], speed: 12 }];
+    expect(codes(rule6_geometryValid(s))).not.toContain("non_attacker_in_impact_radius");
+  });
+
+  it("measures a step from where the previous step left the entity", () => {
+    // A transit lands the entity on its `to`, and the next step starts there —
+    // measuring every step from the spawn point would absolve a programme that
+    // loiters on the asset only after an intermediate hop.
+    const s = draft();
+    const d1 = s.entities.find((e) => e.id === "D1")!;
+    d1.behaviour = [
+      { state: "transit", to: [1000, 1000, 45], speed: 9 },
+      { state: "orbit_loiter", center: [120, -80, 45], radius: 5, speed: 9, duration_s: 120 },
+    ];
+    expect(codes(rule6_geometryValid(s))).toContain("non_attacker_in_impact_radius");
+  });
+
+  it("ignores altitude when measuring overflights", () => {
+    // The sim's impact rule is horizontal (`impact.ts`), so a high transit still
+    // strikes the asset; the validator must not be talked out of it by altitude.
+    const s = draft();
+    const birds = s.entities.find((e) => e.id === "B1")!;
+    birds.pos = [400, -80, 400];
+    birds.behaviour = [{ state: "transit", to: [-400, -80, 400], speed: 10 }];
+    expect(codes(rule6_geometryValid(s))).toContain("non_attacker_in_impact_radius");
   });
 });
 

@@ -40,6 +40,7 @@ import {
   scorePrioritisation,
   scoreRecovery,
 } from "./nodes/coordination.js";
+import { buildMandated } from "./mandated.js";
 import type {
   CompetencyScore,
   CriticalErrorResult,
@@ -216,6 +217,7 @@ export const scoreRun = (input: ScoreInput, options: ScoreOptions = {}): ScoreRe
     critical_errors,
     nodes,
     reviews: buildReviews(facts, nodes),
+    mandated: buildMandated(facts, nodes, critical_errors),
   };
 };
 

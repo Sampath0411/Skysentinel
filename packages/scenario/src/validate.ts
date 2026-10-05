@@ -391,6 +391,16 @@ const POINT_STATES: ReadonlySet<string> = new Set([
 /** Behaviour states that hold position for a fixed time. */
 const HOLD_STATES: ReadonlySet<string> = new Set(["orbit_loiter", "decoy_hover"]);
 
+/**
+ * States that end on an asset, so an entity using them is *meant* to enter an
+ * impact radius. `land` is included on purpose: a landing on an asset is a strike.
+ */
+const APPROACH_STATES: ReadonlySet<string> = new Set([
+  "approach_direct",
+  "terrain_masked_approach",
+  "land",
+]);
+
 /** Fallback step duration when a scenario authors neither `duration_s` nor a speed. */
 const DEFAULT_STEP_S = 30;
 
@@ -540,7 +550,84 @@ export const rule6_geometryValid = (s: Scenario): ValidationIssue[] => {
     }
   }
 
+  // A programme that never attacks must stay out of every asset's impact radius.
+  // The sim strikes any airborne entity inside one and neutralises it, so a loiter
+  // sited on an asset makes a reconnaissance destroy the thing it is watching and
+  // ends the only track in the scenario — the run looks broken from the trainee's
+  // seat, and the AAR then reports a mission outcome the author did not write.
+  // Attackers are exempt: entering the radius is the whole point of their approach.
+  for (const e of s.entities) {
+    if (e.behaviour.some((st) => APPROACH_STATES.has(st.state))) continue;
+    // Fly the programme as the behaviour engine does, so a step is measured from
+    // where the previous one actually left the entity.
+    let here: [number, number, number] = [e.pos[0], e.pos[1], e.pos[2]];
+    for (const st of e.behaviour) {
+      for (const a of s.assets) {
+        const d = closestApproachTo([a.pos[0], a.pos[1]], here, st);
+        if (d !== null && d <= a.impact_radius_m) {
+          issues.push(
+            issue(
+              6,
+              "non_attacker_in_impact_radius",
+              `Entity "${e.id}" comes within ${d.toFixed(0)} m of asset "${a.id}" (impact radius ${a.impact_radius_m} m) ` +
+                `on a ${st.state} step, but nothing in its programme attacks. It would strike the asset on arrival.`,
+              "error",
+              e.id,
+            ),
+          );
+        }
+      }
+      const next = st.to ?? st.center;
+      if (next !== undefined && (POINT_STATES.has(st.state) || HOLD_STATES.has(st.state))) {
+        here = [next[0], next[1], next[2]];
+      }
+    }
+  }
+
   return issues;
+};
+
+/**
+ * The closest a behaviour step's *occupied region* comes to a point in the xy
+ * plane, in metres — the sim measures impacts horizontally (`impact.ts`), so
+ * altitude never saves an overflight.
+ *
+ * Point-to-point states occupy the segment from where the entity was at the start
+ * of the step. Orbit and hover states occupy a disc of `radius` around their
+ * centre, because the behaviour engine snaps the entity onto that disc on the
+ * first tick — an orbit 40 m wide around a centre 20 m from an asset passes
+ * straight through it, which the centre alone would not show.
+ *
+ * Returns `null` for a step that holds the entity where it already is, which the
+ * caller has already measured.
+ */
+const closestApproachTo = (
+  asset: readonly [number, number],
+  start: readonly [number, number, number],
+  step: ScenarioEntity["behaviour"][number],
+): number | null => {
+  if (HOLD_STATES.has(step.state)) {
+    const c = step.center ?? start;
+    const r = step.radius ?? 0;
+    const d = Math.hypot(c[0] - asset[0], c[1] - asset[1]);
+    return Math.max(0, d - r);
+  }
+
+  const target = step.to;
+  if (target === undefined || !POINT_STATES.has(step.state)) return null;
+
+  const ax = asset[0];
+  const ay = asset[1];
+  const sx = start[0];
+  const sy = start[1];
+  const dx = target[0] - sx;
+  const dy = target[1] - sy;
+  const len2 = dx * dx + dy * dy;
+  if (len2 === 0) return Math.hypot(ax - sx, ay - sy);
+
+  // Clamp the projection of the asset onto the segment to its two ends.
+  const u = Math.min(1, Math.max(0, ((ax - sx) * dx + (ay - sy) * dy) / len2));
+  return Math.hypot(ax - (sx + u * dx), ay - (sy + u * dy));
 };
 
 /**

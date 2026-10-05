@@ -65,8 +65,16 @@ const raw = {
       spawn_t_s: 45,
       pos: [400, -200, 60],
       behaviour: [
-        { state: "transit", to: [400, -200, 60], speed: 9 },
-        { state: "orbit_loiter", center: [150, -90, 45], radius: 40, speed: 9, duration_s: 120 },
+        // Fly in from the spawn point rather than appearing on the orbit: the
+        // behaviour engine snaps an entity onto its orbit on the first loiter
+        // tick, so without a transit to the loiter area the contact jumps 300 m
+        // across the scope.
+        { state: "transit", to: [180, -105, 45], speed: 9 },
+        // The orbit is held clear of the fuel point (A1, 15 m impact radius): the
+        // centre is 65 m from it, so the closest approach is 25 m. A loiter that
+        // crosses the radius would strike the asset and end the only track in the
+        // scenario — this is a reconnaissance, not an attack.
+        { state: "orbit_loiter", center: [180, -105, 45], radius: 40, speed: 9, duration_s: 120 },
         { state: "retreat", to: [800, -400, 80], speed: 10 },
       ],
     },

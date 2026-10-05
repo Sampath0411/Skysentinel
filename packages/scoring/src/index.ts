@@ -17,6 +17,7 @@ export { readRun } from "./log.js";
 export type { RunFacts, TrackFacts, ReportFact, PositionFact } from "./log.js";
 export { scoreRun, penaltyOf } from "./score.js";
 export type { ScoreOptions } from "./score.js";
+export { buildMandated, detectionSummary, classificationSummary, responseSummary } from "./mandated.js";
 export { scoreOutcome } from "./outcome.js";
 
 export { scoreCuePresented, scoreDetection, aggregateDetection } from "./nodes/detection.js";

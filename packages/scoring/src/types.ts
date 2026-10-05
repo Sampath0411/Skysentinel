@@ -133,6 +133,13 @@ export interface ScoreResult {
 
   /** Per-track AAR verdicts, cross-referencing process against outcome. */
   reviews: DecisionReview[];
+  /**
+   * The PRD §12.2 "mandated three" — detection time, classification accuracy,
+   * response decisions — pre-computed here rather than in the AAR because the
+   * numbers come from `RunFacts`, which the client never holds. The AAR renders it;
+   * it does not re-derive it, so the card cannot drift from the tree it sits next to.
+   */
+  mandated: MandatedSummary;
 }
 
 /**
@@ -173,3 +180,57 @@ export interface TruthEntity {
 
 /** Signature used across the tree modules. */
 export type NodeSink = (node: NodeResult) => void;
+
+/* --- the mandated three (PRD §12.2) ---------------------------------------- */
+
+/**
+ * The verdict on the run's detection latency.
+ *
+ * The words are `scoreDetection`'s verdicts verbatim, plus the three ways a run can
+ * fail to have a latency at all — nothing was cued, nothing was marked, or the
+ * scenario set no par to measure against. Naming them keeps the card from inventing
+ * a verdict the tree does not also give.
+ */
+export type DetectionGrade =
+  | "at_par"
+  | "late"
+  | "well_past_par"
+  | "never_marked"
+  | "never_cued"
+  | "no_par";
+
+export interface DetectionSummary {
+  /** The truth entity the card describes — the earliest-cued one, early warning being the point. */
+  truth_id: string;
+  /** Seconds from the first credible cue to the first contact mark. `undefined` unless it was marked. */
+  latency_s?: number;
+  /** The scenario's `par_detect_s` for that entity. `undefined` when the author set none. */
+  par_s?: number;
+  grade: DetectionGrade;
+}
+
+export interface ClassificationSummary {
+  /** Share of scored tracks whose *final* declaration was defensible, 0..100. */
+  accuracy_pct: number;
+  /** Tracks whose final declaration matched a defensible category. */
+  correct: number;
+  /** Tracks that had a defensible answer and a declaration, so accuracy is meaningful. */
+  scored: number;
+  /** A one-line note for the card, naming the worst confusion. Empty when there is nothing to say. */
+  confusion_note: string;
+}
+
+export interface ResponseSummary {
+  /** Scored response decisions that passed — permitted, and timely when a par applies. */
+  correct: number;
+  /** Tracks whose response was scored at all; a contact needing no action is not a decision. */
+  total: number;
+  /** `execute_response` without granted authority (PRD §4's absolute rule). */
+  unauthorised: number;
+}
+
+export interface MandatedSummary {
+  detection: DetectionSummary;
+  classification: ClassificationSummary;
+  response: ResponseSummary;
+}

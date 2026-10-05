@@ -87,8 +87,12 @@ const raw = {
       spawn_t_s: 30,
       pos: [520, 380, 95],
       behaviour: [
+        // The hover holds where the transit ended, on the NE perimeter and 400+ m
+        // from both assets. The behaviour engine snaps a decoy onto its hover
+        // centre on the first tick, so a centre sited on the substation (where these
+        // used to be) makes a *diversion* strike the asset it is drawing fire from.
         { state: "transit", to: [380, 300, 90], speed: 11, duration_s: 150 },
-        { state: "decoy_hover", center: [-100, -10, 70], radius: 60, duration_s: 180 },
+        { state: "decoy_hover", center: [380, 300, 90], radius: 60, duration_s: 180 },
       ],
     },
     {
@@ -103,7 +107,7 @@ const raw = {
       pos: [560, 340, 100],
       behaviour: [
         { state: "transit", to: [410, 265, 92], speed: 11, duration_s: 150 },
-        { state: "decoy_hover", center: [-80, 20, 72], radius: 60, duration_s: 180 },
+        { state: "decoy_hover", center: [410, 265, 92], radius: 60, duration_s: 180 },
       ],
     },
     {
@@ -118,7 +122,7 @@ const raw = {
       pos: [480, 420, 92],
       behaviour: [
         { state: "transit", to: [350, 335, 88], speed: 11, duration_s: 150 },
-        { state: "decoy_hover", center: [-120, 20, 68], radius: 60, duration_s: 180 },
+        { state: "decoy_hover", center: [350, 335, 88], radius: 60, duration_s: 180 },
       ],
     },
     {
@@ -133,7 +137,7 @@ const raw = {
       pos: [600, 300, 105],
       behaviour: [
         { state: "transit", to: [445, 225, 96], speed: 11, duration_s: 150 },
-        { state: "decoy_hover", center: [-70, -30, 74], radius: 60, duration_s: 180 },
+        { state: "decoy_hover", center: [445, 225, 96], radius: 60, duration_s: 180 },
       ],
     },
     {
@@ -148,7 +152,7 @@ const raw = {
       pos: [540, 430, 98],
       behaviour: [
         { state: "transit", to: [395, 350, 94], speed: 11, duration_s: 150 },
-        { state: "decoy_hover", center: [-100, 40, 70], radius: 60, duration_s: 180 },
+        { state: "decoy_hover", center: [395, 350, 94], radius: 60, duration_s: 180 },
       ],
     },
 
@@ -224,7 +228,11 @@ const raw = {
       intent: "civil",
       rf_emitting: false,
       spawn_t_s: 260,
-      pos: [-500, 420, 60],
+      // The crossing is held ~33 m clear of the operations centre (A1, 15 m impact
+      // radius): a civilian that flies through the asset would strike it, and a
+      // neutral destroying the priority asset makes the scenario unwinnable for a
+      // trainee who classifies it correctly.
+      pos: [-540, 380, 60],
       behaviour: [{ state: "transit", to: [400, -300, 60], speed: 13 }],
     },
   ],

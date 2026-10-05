@@ -86,13 +86,7 @@ export {
   urbanSwarmDiversion01,
 } from "./scripted/index.js";
 
-export {
-  main,
-  parseArgs,
-  validateFile,
-  renderResult,
-  isMainModule,
-  USAGE,
-  type FileResult,
-  type ValidateArgs,
-} from "./cli.js";
+// The CLI stays off the root entry on purpose. It is a Node-only entry
+// point (`node:fs`, `node:path`) shipped behind the `./cli` subpath so a
+// browser bundle can pull the schemas and scripted scenarios without
+// dragging the filesystem in (PRD §4, FR-PLT-1).
